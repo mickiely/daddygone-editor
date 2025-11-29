@@ -37,6 +37,8 @@ export interface Layer {
   fillColor?: string;
   strokeColor?: string;
   strokeWidth?: number;
+  // AI detected metadata
+  isAIObject?: boolean;
 }
 
 interface LayerItemProps {
