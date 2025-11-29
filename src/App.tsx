@@ -18,7 +18,7 @@ import { LayersPanel } from './components/LayersPanel';
 import { LayerCanvas } from './components/LayerCanvas';
 import { GeminiKeyDialog } from './components/GeminiKeyDialog';
 import { Layer } from './components/LayerItem';
-import { detectLayersWithAI, extractLayerFromBounds, createSmartMask } from './components/ai-layer-detection';
+import { detectLayersWithAI, extractLayerFromBounds } from './components/ai-layer-detection';
 import { Button } from './components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Separator } from './components/ui/separator';
@@ -1252,9 +1252,6 @@ export default function App() {
   // Layer Management Functions
   const handleDetectLayers = async () => {
     if (!canvasRef.current) return;
-    const sourceCanvas = canvasRef.current;
-    const sourceCtx = sourceCanvas.getContext('2d');
-    if (!sourceCtx) return;
     
     // Check if API key is set
     if (!geminiApiKey) {
@@ -1275,52 +1272,25 @@ export default function App() {
       
       // Create layers from detected objects
       const newLayers: Layer[] = detectedObjects.map((obj, index) => {
-        const bounds = obj.bounds;
-        let mask: ImageData | null = null;
-        try {
-          mask = createSmartMask(sourceCanvas, bounds, 35);
-        } catch (err) {
-          console.warn('Mask generation failed, falling back to simple crop', err);
-        }
-
-        let layerCanvas: HTMLCanvasElement;
-        if (mask) {
-          const region = sourceCtx.getImageData(bounds.x, bounds.y, bounds.width, bounds.height);
-          const masked = sourceCtx.createImageData(bounds.width, bounds.height);
-          for (let i = 0; i < region.data.length; i += 4) {
-            const alpha = mask.data[i + 3] / 255;
-            masked.data[i] = region.data[i];
-            masked.data[i + 1] = region.data[i + 1];
-            masked.data[i + 2] = region.data[i + 2];
-            masked.data[i + 3] = Math.round(region.data[i + 3] * alpha);
-          }
-          layerCanvas = document.createElement('canvas');
-          layerCanvas.width = bounds.width;
-          layerCanvas.height = bounds.height;
-          const lctx = layerCanvas.getContext('2d');
-          lctx?.putImageData(masked, 0, 0);
-        } else {
-          layerCanvas = extractLayerFromBounds(sourceCanvas, bounds);
-        }
+        const layerCanvas = extractLayerFromBounds(canvasRef.current!, obj.bounds);
         
         return {
           id: layerIdCounter + index + 1,
           type: 'image' as const,
-          name: obj.name || `Object ${index + 1}`,
-          x: bounds.x,
-          y: bounds.y,
-          width: bounds.width,
-          height: bounds.height,
+          name: obj.name,
+          x: obj.bounds.x,
+          y: obj.bounds.y,
+          width: obj.bounds.width,
+          height: obj.bounds.height,
           opacity: 1,
           isVisible: true,
-          zIndex: imageLayers.length + index + 1,
+          zIndex: index + 1,
           src: layerCanvas.toDataURL(),
           rotation: 0,
-          isAIObject: true,
         };
       });
       
-      setImageLayers([...imageLayers, ...newLayers]);
+      setImageLayers(newLayers);
       setLayerIdCounter(layerIdCounter + detectedObjects.length);
       toast.success(`Detected ${detectedObjects.length} layer${detectedObjects.length !== 1 ? 's' : ''}!`);
     } catch (error) {
@@ -1441,7 +1411,7 @@ export default function App() {
   const hasImage = Boolean(originalImage);
 
   return (
-    <div className="flex min-h-screen w-screen flex-col bg-gray-950 text-white">
+    <div className="flex h-screen flex-col overflow-hidden bg-gray-950 text-white">
       <Toaster position="top-right" />
 
       <header className="border-b border-gray-800 bg-gray-900/90 px-6 py-4">
@@ -1457,16 +1427,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" asChild>
-              <a
-                href="https://daddygone.smartartse.com.au"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-gray-200 hover:text-white"
-              >
-                Daddy Gone
-              </a>
-            </Button>
             <Button variant="outline" size="sm" className="border-gray-700 text-gray-200">
               Preview
             </Button>
@@ -1521,7 +1481,7 @@ export default function App() {
         </div>
       </header>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 flex-col">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 flex-col overflow-hidden">
         <div className="flex items-center justify-between border-b border-gray-800 bg-gray-900/70 px-6 py-2">
           <TabsList className="h-10 bg-gray-800/80">
             <TabsTrigger value="tools" className="data-[state=active]:bg-gray-700">Tools</TabsTrigger>
@@ -1563,7 +1523,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex flex-1">
+        <div className="flex flex-1 overflow-hidden">
           <aside className="flex w-72 flex-col border-r border-gray-800 bg-gray-900/80 backdrop-blur">
             <div className="p-4">
               <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Tools</p>
@@ -1606,7 +1566,7 @@ export default function App() {
             </div>
           </aside>
 
-          <div className="flex flex-1">
+          <div className="flex flex-1 overflow-hidden">
             <div
               ref={containerRef}
               className="flex flex-1 items-center justify-center overflow-auto bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-gray-900 to-gray-950 p-8"
@@ -1759,26 +1719,14 @@ export default function App() {
                       <StickerLifter
                         canvas={canvasRef.current}
                         scale={scale}
-                        onComplete={(stickerCanvas, bounds) => {
-                          const newLayer: Layer = {
-                            id: layerIdCounter + 1,
-                            type: 'image',
-                            name: `Sticker ${layerIdCounter + 1}`,
-                            x: bounds.x,
-                            y: bounds.y,
-                            width: bounds.width,
-                            height: bounds.height,
-                            opacity: 1,
-                            isVisible: true,
-                            zIndex: imageLayers.length + 1,
-                            src: stickerCanvas.toDataURL(),
-                            rotation: 0,
-                          };
-
-                          setImageLayers([...imageLayers, newLayer]);
-                          setLayerIdCounter(layerIdCounter + 1);
-                          setSelectedLayerId(newLayer.id);
-                          toast.success('Sticker applied as new layer!');
+                        onComplete={(stickerCanvas) => {
+                          const ctx = canvasRef.current?.getContext('2d');
+                          if (ctx) {
+                            ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
+                            ctx.drawImage(stickerCanvas, 0, 0);
+                            saveToHistory();
+                            toast.success('Sticker applied to canvas!');
+                          }
                           setIsLiftingSticker(false);
                           setSelectedTool('brush');
                         }}

@@ -1,20 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Download, X, Check, Scissors, Eraser, RefreshCw, Image as ImageIcon } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Download, X, Check, Scissors, Eraser, RefreshCw } from 'lucide-react';
 import { Button } from './ui/button';
 import { Slider } from './ui/slider';
-import {
-  BoundingBox,
-  createSelectionMaskFromSeed,
-  extractStickerCanvas,
-  featherMask,
-  getMaskBoundingBox,
-  growShrinkMask,
-} from './utils/selection-mask';
 
 interface StickerLifterProps {
   canvas: HTMLCanvasElement;
   scale: number;
-  onComplete: (stickerCanvas: HTMLCanvasElement, bounds: BoundingBox) => void;
+  onComplete: (stickerCanvas: HTMLCanvasElement) => void;
   onCancel: () => void;
 }
 
@@ -22,18 +14,11 @@ type Mode = 'select' | 'refine';
 
 export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLifterProps) {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
   const [mode, setMode] = useState<Mode>('select');
   const [tolerance, setTolerance] = useState(30);
+  const [selectedRegion, setSelectedRegion] = useState<Set<string>>(new Set());
   const [brushSize, setBrushSize] = useState(20);
-  const [feather, setFeather] = useState(2);
-  const [expand, setExpand] = useState(0);
-  const [baseMask, setBaseMask] = useState<Uint8ClampedArray | null>(null);
-  const [displayMask, setDisplayMask] = useState<Uint8ClampedArray | null>(null);
-  const [stickerCanvas, setStickerCanvas] = useState<HTMLCanvasElement | null>(null);
-  const [bounds, setBounds] = useState<BoundingBox | null>(null);
-  const [lastSeed, setLastSeed] = useState<{ x: number; y: number } | null>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Initialize overlay canvas
   useEffect(() => {
@@ -43,16 +28,12 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
     overlayCanvas.width = canvas.width;
     overlayCanvas.height = canvas.height;
 
-    drawMaskOverlay(displayMask);
-  }, [canvas, displayMask, drawMaskOverlay]);
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) return;
 
-  useEffect(() => {
-    if (stickerCanvas) {
-      setPreviewUrl(stickerCanvas.toDataURL());
-    } else {
-      setPreviewUrl(null);
-    }
-  }, [stickerCanvas]);
+    // Clear overlay
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  }, [canvas]);
 
   const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -60,98 +41,92 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
     const scaleY = canvas.height / rect.height;
 
     return {
-      x: Math.max(0, Math.min(canvas.width - 1, Math.floor((e.clientX - rect.left) * scaleX))),
-      y: Math.max(0, Math.min(canvas.height - 1, Math.floor((e.clientY - rect.top) * scaleY))),
+      x: Math.floor((e.clientX - rect.left) * scaleX),
+      y: Math.floor((e.clientY - rect.top) * scaleY),
     };
   };
 
-  const drawMaskOverlay = useCallback((mask: Uint8ClampedArray | null) => {
-    const overlayCanvas = overlayCanvasRef.current;
-    const ctx = overlayCanvas?.getContext('2d');
-    if (!ctx || !overlayCanvas) return;
-
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-    if (!mask) return;
-
-    const overlayData = ctx.createImageData(overlayCanvas.width, overlayCanvas.height);
-    for (let i = 0; i < mask.length; i++) {
-      const alpha = mask[i] > 0 ? 120 : 0;
-      overlayData.data[i * 4] = 64;
-      overlayData.data[i * 4 + 1] = 180;
-      overlayData.data[i * 4 + 2] = 255;
-      overlayData.data[i * 4 + 3] = alpha;
-    }
-    ctx.putImageData(overlayData, 0, 0);
-  }, []);
-
-  const rebuildPreview = useCallback((mask: Uint8ClampedArray | null, customExpand?: number, customFeather?: number) => {
-    if (!mask) {
-      setDisplayMask(null);
-      setStickerCanvas(null);
-      setBounds(null);
-      drawMaskOverlay(null);
-      return;
-    }
-
-    const expandAmount = customExpand !== undefined ? customExpand : expand;
-    const featherAmount = customFeather !== undefined ? customFeather : feather;
-
-    const grown = growShrinkMask(mask, canvas.width, canvas.height, expandAmount);
-    const feathered = featherMask(grown, canvas.width, canvas.height, featherAmount);
-    const bbox = getMaskBoundingBox(feathered, canvas.width, canvas.height);
-
-    if (!bbox) {
-      setDisplayMask(null);
-      setStickerCanvas(null);
-      setBounds(null);
-      drawMaskOverlay(null);
-      return;
-    }
-
-    const extracted = extractStickerCanvas(canvas, feathered, bbox);
-    setDisplayMask(feathered);
-    setStickerCanvas(extracted);
-    setBounds(bbox);
-    drawMaskOverlay(feathered);
-  }, [canvas, drawMaskOverlay, expand, feather]);
-
-  const handleSeedSelect = useCallback((x: number, y: number, nextTolerance?: number) => {
+  const floodFillSelect = (startX: number, startY: number) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const tol = nextTolerance !== undefined ? nextTolerance : tolerance;
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const { mask } = createSelectionMaskFromSeed(imageData, x, y, tol);
-    setLastSeed({ x, y });
-    setBaseMask(mask);
-    rebuildPreview(mask);
-  }, [canvas, tolerance, rebuildPreview]);
 
-  useEffect(() => {
-    if (lastSeed) {
-      handleSeedSelect(lastSeed.x, lastSeed.y, tolerance);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const visited = new Set<string>();
+    const toFill = new Set<string>();
+    
+    const startIdx = (startY * canvas.width + startX) * 4;
+    const startR = data[startIdx];
+    const startG = data[startIdx + 1];
+    const startB = data[startIdx + 2];
+
+    const queue: [number, number][] = [[startX, startY]];
+
+    while (queue.length > 0) {
+      const [x, y] = queue.shift()!;
+      const key = `${x},${y}`;
+
+      if (visited.has(key)) continue;
+      if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) continue;
+
+      visited.add(key);
+
+      const idx = (y * canvas.width + x) * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+
+      const diff = Math.abs(r - startR) + Math.abs(g - startG) + Math.abs(b - startB);
+
+      if (diff <= tolerance) {
+        toFill.add(key);
+        queue.push([x + 1, y]);
+        queue.push([x - 1, y]);
+        queue.push([x, y + 1]);
+        queue.push([x, y - 1]);
+      }
     }
-  }, [tolerance, lastSeed, handleSeedSelect]);
+
+    setSelectedRegion(toFill);
+    drawSelection(toFill);
+  };
+
+  const drawSelection = (region: Set<string>) => {
+    const overlayCanvas = overlayCanvasRef.current;
+    const ctx = overlayCanvas?.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(0, 150, 255, 0.4)';
+
+    region.forEach((key) => {
+      const [x, y] = key.split(',').map(Number);
+      ctx.fillRect(x, y, 1, 1);
+    });
+  };
 
   const refineBrush = (x: number, y: number, add: boolean) => {
-    if (!baseMask) return;
-    const updated = new Uint8ClampedArray(baseMask);
-    const rSq = brushSize * brushSize;
-
+    const newRegion = new Set(selectedRegion);
+    
     for (let dy = -brushSize; dy <= brushSize; dy++) {
       for (let dx = -brushSize; dx <= brushSize; dx++) {
-        if (dx * dx + dy * dy <= rSq) {
+        if (dx * dx + dy * dy <= brushSize * brushSize) {
           const px = x + dx;
           const py = y + dy;
           if (px >= 0 && px < canvas.width && py >= 0 && py < canvas.height) {
-            const idx = py * canvas.width + px;
-            updated[idx] = add ? 255 : 0;
+            const key = `${px},${py}`;
+            if (add) {
+              newRegion.add(key);
+            } else {
+              newRegion.delete(key);
+            }
           }
         }
       }
     }
 
-    setBaseMask(updated);
-    rebuildPreview(updated);
+    setSelectedRegion(newRegion);
+    drawSelection(newRegion);
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -159,9 +134,9 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
     const { x, y } = getCanvasCoordinates(e);
 
     if (mode === 'select') {
-      handleSeedSelect(x, y);
+      floodFillSelect(x, y);
     } else {
-      refineBrush(x, y, e.button === 0);
+      refineBrush(x, y, e.button === 0); // Left click adds, right click removes
     }
   };
 
@@ -176,12 +151,72 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
   };
 
   const createSticker = () => {
-    if (!stickerCanvas || !bounds) return;
-    onComplete(stickerCanvas, bounds);
+    const stickerCanvas = document.createElement('canvas');
+    stickerCanvas.width = canvas.width;
+    stickerCanvas.height = canvas.height;
+    const stickerCtx = stickerCanvas.getContext('2d');
+    if (!stickerCtx) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const newImageData = stickerCtx.createImageData(canvas.width, canvas.height);
+
+    // Copy selected pixels with transparency
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        const key = `${x},${y}`;
+        const idx = (y * canvas.width + x) * 4;
+
+        if (selectedRegion.has(key)) {
+          newImageData.data[idx] = imageData.data[idx];
+          newImageData.data[idx + 1] = imageData.data[idx + 1];
+          newImageData.data[idx + 2] = imageData.data[idx + 2];
+          newImageData.data[idx + 3] = imageData.data[idx + 3];
+        } else {
+          newImageData.data[idx + 3] = 0; // Transparent
+        }
+      }
+    }
+
+    stickerCtx.putImageData(newImageData, 0, 0);
+    onComplete(stickerCanvas);
   };
 
   const downloadSticker = () => {
-    if (!stickerCanvas) return;
+    const stickerCanvas = document.createElement('canvas');
+    stickerCanvas.width = canvas.width;
+    stickerCanvas.height = canvas.height;
+    const stickerCtx = stickerCanvas.getContext('2d');
+    if (!stickerCtx) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const newImageData = stickerCtx.createImageData(canvas.width, canvas.height);
+
+    // Copy selected pixels with transparency
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        const key = `${x},${y}`;
+        const idx = (y * canvas.width + x) * 4;
+
+        if (selectedRegion.has(key)) {
+          newImageData.data[idx] = imageData.data[idx];
+          newImageData.data[idx + 1] = imageData.data[idx + 1];
+          newImageData.data[idx + 2] = imageData.data[idx + 2];
+          newImageData.data[idx + 3] = imageData.data[idx + 3];
+        } else {
+          newImageData.data[idx + 3] = 0; // Transparent
+        }
+      }
+    }
+
+    stickerCtx.putImageData(newImageData, 0, 0);
+
+    // Download
     stickerCanvas.toBlob((blob) => {
       if (blob) {
         const url = URL.createObjectURL(blob);
@@ -236,10 +271,10 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
             </Button>
           </div>
 
-          {/* Controls */}
+          {/* Tolerance/Brush Size */}
           {mode === 'select' ? (
-            <div className="space-y-2">
-              <label className="text-sm text-gray-300 mb-1 flex items-center justify-between">
+            <div>
+              <label className="text-sm text-gray-300 mb-2 flex items-center justify-between">
                 <span>Tolerance</span>
                 <span className="text-white">{tolerance}</span>
               </label>
@@ -247,96 +282,39 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
                 value={[tolerance]}
                 onValueChange={([value]) => setTolerance(value)}
                 min={5}
-                max={120}
+                max={100}
                 step={5}
                 className="w-full"
               />
-              <p className="text-xs text-gray-400">
-                Click on the object to select similar colors.
-              </p>
+              <p className="text-xs text-gray-400 mt-1">Click on the object to select similar colors</p>
             </div>
           ) : (
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm text-gray-300 mb-2 flex items-center justify-between">
-                  <span>Brush Size</span>
-                  <span className="text-white">{brushSize}px</span>
-                </label>
-                <Slider
-                  value={[brushSize]}
-                  onValueChange={([value]) => setBrushSize(value)}
-                  min={5}
-                  max={50}
-                  step={5}
-                  className="w-full"
-                />
-                <p className="text-xs text-gray-400 mt-1">Left click to add, right click to remove.</p>
-              </div>
-              <div>
-                <label className="text-sm text-gray-300 mb-2 flex items-center justify-between">
-                  <span>Feather</span>
-                  <span className="text-white">{feather}px</span>
-                </label>
-                <Slider
-                  value={[feather]}
-                  onValueChange={([value]) => {
-                    setFeather(value);
-                    rebuildPreview(baseMask, undefined, value);
-                  }}
-                  min={0}
-                  max={10}
-                  step={1}
-                  className="w-full"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-gray-300 mb-2 flex items-center justify-between">
-                  <span>Expand / Shrink</span>
-                  <span className="text-white">{expand}</span>
-                </label>
-                <Slider
-                  value={[expand]}
-                  onValueChange={([value]) => {
-                    setExpand(value);
-                    rebuildPreview(baseMask, value, undefined);
-                  }}
-                  min={-5}
-                  max={5}
-                  step={1}
-                  className="w-full"
-                />
-                <p className="text-xs text-gray-400 mt-1">Negative shrinks, positive grows the selection.</p>
-              </div>
+            <div>
+              <label className="text-sm text-gray-300 mb-2 flex items-center justify-between">
+                <span>Brush Size</span>
+                <span className="text-white">{brushSize}px</span>
+              </label>
+              <Slider
+                value={[brushSize]}
+                onValueChange={([value]) => setBrushSize(value)}
+                min={5}
+                max={50}
+                step={5}
+                className="w-full"
+              />
+              <p className="text-xs text-gray-400 mt-1">Left click to add, right click to remove</p>
             </div>
           )}
-
-          {/* Preview */}
-          <div className="rounded-lg border border-gray-700 bg-gray-800/70 p-3 flex items-center gap-3">
-            <div className="flex h-16 w-16 items-center justify-center rounded-md bg-gray-900 border border-gray-700 overflow-hidden">
-              {previewUrl ? (
-                <img src={previewUrl} alt="Sticker preview" className="h-full w-full object-contain" />
-              ) : (
-                <ImageIcon className="h-6 w-6 text-gray-500" />
-              )}
-            </div>
-            <div className="space-y-1 text-sm text-gray-300">
-              <p className="font-semibold text-white">Sticker Preview</p>
-              <p className="text-xs text-gray-400">
-                {stickerCanvas ? 'Ready to download or apply.' : 'Click the subject to lift it from the background.'}
-              </p>
-            </div>
-          </div>
 
           {/* Action Buttons */}
           <div className="flex gap-2">
             <Button
               onClick={() => {
-                setBaseMask(null);
-                setDisplayMask(null);
-                setStickerCanvas(null);
-                setBounds(null);
-                setLastSeed(null);
-                drawMaskOverlay(null);
+                setSelectedRegion(new Set());
+                const ctx = overlayCanvasRef.current?.getContext('2d');
+                if (ctx) {
+                  ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
               }}
               variant="outline"
               size="sm"
@@ -356,7 +334,7 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
             </Button>
             <Button
               onClick={downloadSticker}
-              disabled={!stickerCanvas}
+              disabled={selectedRegion.size === 0}
               className="flex-1 bg-green-600 hover:bg-green-700"
               size="sm"
             >
@@ -365,7 +343,7 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
             </Button>
             <Button
               onClick={createSticker}
-              disabled={!stickerCanvas || !bounds}
+              disabled={selectedRegion.size === 0}
               className="flex-1 bg-blue-600 hover:bg-blue-700"
               size="sm"
             >

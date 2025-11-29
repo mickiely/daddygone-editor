@@ -53,7 +53,7 @@ export function LayersPanel({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-col gap-2">
+        <div className="flex gap-2">
           <Button
             onClick={onDetectLayers}
             disabled={isDetecting}
@@ -62,16 +62,6 @@ export function LayersPanel({
           >
             <Sparkles className="h-4 w-4 mr-2" />
             {isDetecting ? 'Detecting...' : 'Auto-Detect Layers'}
-          </Button>
-          <Button
-            onClick={onDetectLayers}
-            disabled={isDetecting}
-            variant="outline"
-            size="sm"
-            className="flex-1 border-gray-700 text-gray-200"
-          >
-            <Sparkles className="h-4 w-4 mr-2" />
-            {isDetecting ? 'Detecting...' : 'Detect Objects (AI)'}
           </Button>
           <Button
             onClick={onAddImageLayer}
