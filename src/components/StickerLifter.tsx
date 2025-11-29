@@ -34,7 +34,6 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
   const [lastSeed, setLastSeed] = useState<{ x: number; y: number } | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   // Initialize overlay canvas
   useEffect(() => {
@@ -86,82 +85,45 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
   }, []);
 
   const rebuildPreview = useCallback((mask: Uint8ClampedArray | null, customExpand?: number, customFeather?: number) => {
-    try {
-      if (!mask) {
-        setDisplayMask(null);
-        setStickerCanvas(null);
-        setBounds(null);
-        drawMaskOverlay(null);
-        return;
-      }
-
-      const expandAmount = customExpand !== undefined ? customExpand : expand;
-      const featherAmount = customFeather !== undefined ? customFeather : feather;
-
-      const grown = growShrinkMask(mask, canvas.width, canvas.height, expandAmount);
-      const feathered = featherMask(grown, canvas.width, canvas.height, featherAmount);
-      const bbox = getMaskBoundingBox(feathered, canvas.width, canvas.height);
-
-      if (!bbox) {
-        setDisplayMask(null);
-        setStickerCanvas(null);
-        setBounds(null);
-        drawMaskOverlay(null);
-        setError('No selectable region found. Try adjusting tolerance.');
-        return;
-      }
-
-      const extracted = extractStickerCanvas(canvas, feathered, bbox);
-      if (!extracted) {
-        setError('Failed to build sticker preview.');
-        setDisplayMask(null);
-        setStickerCanvas(null);
-        setBounds(null);
-        drawMaskOverlay(null);
-        return;
-      }
-
-      setError(null);
-      setDisplayMask(feathered);
-      setStickerCanvas(extracted);
-      setBounds(bbox);
-      drawMaskOverlay(feathered);
-    } catch (err) {
-      console.error('[StickerLifter] rebuild preview failed', err);
-      setError('Could not render sticker preview.');
+    if (!mask) {
       setDisplayMask(null);
       setStickerCanvas(null);
       setBounds(null);
       drawMaskOverlay(null);
+      return;
     }
+
+    const expandAmount = customExpand !== undefined ? customExpand : expand;
+    const featherAmount = customFeather !== undefined ? customFeather : feather;
+
+    const grown = growShrinkMask(mask, canvas.width, canvas.height, expandAmount);
+    const feathered = featherMask(grown, canvas.width, canvas.height, featherAmount);
+    const bbox = getMaskBoundingBox(feathered, canvas.width, canvas.height);
+
+    if (!bbox) {
+      setDisplayMask(null);
+      setStickerCanvas(null);
+      setBounds(null);
+      drawMaskOverlay(null);
+      return;
+    }
+
+    const extracted = extractStickerCanvas(canvas, feathered, bbox);
+    setDisplayMask(feathered);
+    setStickerCanvas(extracted);
+    setBounds(bbox);
+    drawMaskOverlay(feathered);
   }, [canvas, drawMaskOverlay, expand, feather]);
 
   const handleSeedSelect = useCallback((x: number, y: number, nextTolerance?: number) => {
-    try {
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        setError('Canvas is not available.');
-        return;
-      }
-      if (!canvas.width || !canvas.height) {
-        setError('No image loaded to lift a sticker from.');
-        return;
-      }
-      const tol = nextTolerance !== undefined ? nextTolerance : tolerance;
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const res = createSelectionMaskFromSeed(imageData, x, y, tol);
-      if (!res || !res.mask) {
-        setError('Could not detect a clean region from that click. Try adjusting tolerance.');
-        return;
-      }
-      setError(null);
-      setLastSeed({ x, y });
-      setBaseMask(res.mask);
-      rebuildPreview(res.mask);
-    } catch (err) {
-      console.error('[StickerLifter] seed selection failed', err);
-      setError('Could not create a selection from that area. Try again.');
-    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const tol = nextTolerance !== undefined ? nextTolerance : tolerance;
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const { mask } = createSelectionMaskFromSeed(imageData, x, y, tol);
+    setLastSeed({ x, y });
+    setBaseMask(mask);
+    rebuildPreview(mask);
   }, [canvas, tolerance, rebuildPreview]);
 
   useEffect(() => {
@@ -214,39 +176,22 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
   };
 
   const createSticker = () => {
-    if (!stickerCanvas || !bounds) {
-      setError('No sticker ready to apply.');
-      return;
-    }
-    try {
-      onComplete(stickerCanvas, bounds);
-      setError(null);
-    } catch (err) {
-      console.error('[StickerLifter] apply failed', err);
-      setError('Failed to apply sticker to canvas.');
-    }
+    if (!stickerCanvas || !bounds) return;
+    onComplete(stickerCanvas, bounds);
   };
 
   const downloadSticker = () => {
-    if (!stickerCanvas) {
-      setError('No sticker ready to download.');
-      return;
-    }
-    try {
-      stickerCanvas.toBlob((blob) => {
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `sticker-${Date.now()}.png`;
-          a.click();
-          URL.revokeObjectURL(url);
-        }
-      }, 'image/png');
-    } catch (err) {
-      console.error('[StickerLifter] download failed', err);
-      setError('Failed to download sticker.');
-    }
+    if (!stickerCanvas) return;
+    stickerCanvas.toBlob((blob) => {
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `sticker-${Date.now()}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    }, 'image/png');
   };
 
   return (
@@ -263,23 +208,17 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
-    />
+        onMouseLeave={handleMouseUp}
+      />
 
-    {/* Controls Panel */}
-    <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-gray-900 rounded-lg shadow-2xl p-4 border border-gray-700">
-      <div className="flex flex-col gap-4 min-w-[400px]">
-        {error && (
-          <div className="rounded-md border border-red-500/60 bg-red-900/30 px-3 py-2 text-sm text-red-200">
-            {error}
-          </div>
-        )}
-
-        {/* Mode Toggle */}
-        <div className="flex gap-2">
-          <Button
-            onClick={() => setMode('select')}
-            variant={mode === 'select' ? 'default' : 'outline'}
+      {/* Controls Panel */}
+      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-gray-900 rounded-lg shadow-2xl p-4 border border-gray-700">
+        <div className="flex flex-col gap-4 min-w-[400px]">
+          {/* Mode Toggle */}
+          <div className="flex gap-2">
+            <Button
+              onClick={() => setMode('select')}
+              variant={mode === 'select' ? 'default' : 'outline'}
               size="sm"
               className="flex-1"
             >
@@ -417,7 +356,7 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
             </Button>
             <Button
               onClick={downloadSticker}
-              disabled={!stickerCanvas || !!error}
+              disabled={!stickerCanvas}
               className="flex-1 bg-green-600 hover:bg-green-700"
               size="sm"
             >
@@ -426,7 +365,7 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
             </Button>
             <Button
               onClick={createSticker}
-              disabled={!stickerCanvas || !bounds || !!error}
+              disabled={!stickerCanvas || !bounds}
               className="flex-1 bg-blue-600 hover:bg-blue-700"
               size="sm"
             >

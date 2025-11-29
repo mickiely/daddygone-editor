@@ -18,9 +18,7 @@ export function createSelectionMaskFromSeed(
   seedX: number,
   seedY: number,
   tolerance: number
-): MaskResult | null {
-  if (!imageData || !imageData.data || imageData.width <= 0 || imageData.height <= 0) return null;
-  if (seedX < 0 || seedY < 0 || seedX >= imageData.width || seedY >= imageData.height) return null;
+): MaskResult {
   const { width, height, data } = imageData;
   const mask = new Uint8ClampedArray(width * height);
   const visited = new Uint8Array(width * height);
@@ -78,7 +76,6 @@ export function growShrinkMask(
   height: number,
   amount: number
 ): Uint8ClampedArray {
-  if (!mask || width <= 0 || height <= 0) return new Uint8ClampedArray();
   if (amount === 0) return new Uint8ClampedArray(mask);
 
   const iterations = Math.min(Math.abs(amount), 10);
@@ -139,7 +136,6 @@ export function featherMask(
   height: number,
   radius: number
 ): Uint8ClampedArray {
-  if (!mask || width <= 0 || height <= 0) return new Uint8ClampedArray();
   if (radius <= 0) return new Uint8ClampedArray(mask);
 
   const temp = new Float32Array(width * height);
@@ -186,7 +182,6 @@ export function getMaskBoundingBox(
   width: number,
   height: number
 ): BoundingBox | null {
-  if (!mask || width <= 0 || height <= 0) return null;
   let minX = width, minY = height, maxX = -1, maxY = -1;
 
   for (let y = 0; y < height; y++) {
@@ -210,7 +205,6 @@ export function extractStickerCanvas(
   alphaMask: Uint8ClampedArray,
   bbox: BoundingBox
 ): HTMLCanvasElement | null {
-  if (!sourceCanvas || !alphaMask || !bbox) return null;
   const { width, height } = sourceCanvas;
   const ctx = sourceCanvas.getContext('2d');
   if (!ctx) return null;
