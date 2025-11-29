@@ -14,11 +14,46 @@ type Mode = 'select' | 'refine';
 
 export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLifterProps) {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [mode, setMode] = useState<Mode>('select');
   const [tolerance, setTolerance] = useState(30);
   const [selectedRegion, setSelectedRegion] = useState<Set<string>>(new Set());
   const [brushSize, setBrushSize] = useState(20);
+  const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
+  const dragState = useRef<{ offsetX: number; offsetY: number } | null>(null);
+
+  // Drag handlers for panel
+  const handlePanelDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!panelRef.current) return;
+    const rect = panelRef.current.getBoundingClientRect();
+    dragState.current = {
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+    };
+    window.addEventListener('mousemove', handlePanelDrag);
+    window.addEventListener('mouseup', handlePanelDragEnd);
+  };
+
+  const handlePanelDrag = (e: MouseEvent) => {
+    if (!dragState.current || !panelRef.current) return;
+    const width = panelRef.current.offsetWidth;
+    const height = panelRef.current.offsetHeight;
+    const margin = 8;
+    const nextX = e.clientX - dragState.current.offsetX;
+    const nextY = e.clientY - dragState.current.offsetY;
+
+    const clampedX = Math.min(Math.max(nextX, margin), window.innerWidth - width - margin);
+    const clampedY = Math.min(Math.max(nextY, margin), window.innerHeight - height - margin);
+    setPanelPosition({ x: clampedX, y: clampedY });
+  };
+
+  const handlePanelDragEnd = () => {
+    window.removeEventListener('mousemove', handlePanelDrag);
+    window.removeEventListener('mouseup', handlePanelDragEnd);
+    dragState.current = null;
+  };
 
   // Initialize overlay canvas
   useEffect(() => {
@@ -34,6 +69,13 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
     // Clear overlay
     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   }, [canvas]);
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('mousemove', handlePanelDrag);
+      window.removeEventListener('mouseup', handlePanelDragEnd);
+    };
+  }, []);
 
   const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -150,6 +192,10 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
     setIsDrawing(false);
   };
 
+  const panelStyle = panelPosition
+    ? { left: panelPosition.x, top: panelPosition.y, transform: 'none' as const }
+    : undefined;
+
   const createSticker = () => {
     const stickerCanvas = document.createElement('canvas');
     stickerCanvas.width = canvas.width;
@@ -247,8 +293,22 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
       />
 
       {/* Controls Panel */}
-      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-gray-900 rounded-lg shadow-2xl p-4 border border-gray-700">
+      <div
+        ref={panelRef}
+        className={`fixed bg-gray-900 rounded-lg shadow-2xl p-4 border border-gray-700 ${
+          panelPosition ? '' : 'left-1/2 -translate-x-1/2 bottom-4'
+        }`}
+        style={panelStyle}
+      >
         <div className="flex flex-col gap-4 min-w-[400px]">
+          <div
+            className="flex items-center justify-between rounded-md border border-gray-700 bg-gray-800/70 px-3 py-1 text-xs text-gray-300 cursor-move"
+            onMouseDown={handlePanelDragStart}
+          >
+            <span>Lift Sticker</span>
+            <span className="text-[10px] text-gray-400">Drag to move</span>
+          </div>
+
           {/* Mode Toggle */}
           <div className="flex gap-2">
             <Button
