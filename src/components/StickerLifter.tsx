@@ -22,6 +22,8 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
   const [brushSize, setBrushSize] = useState(20);
   const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
   const dragState = useRef<{ offsetX: number; offsetY: number } | null>(null);
+  const longPressTimer = useRef<number | null>(null);
+  const longPressFired = useRef(false);
 
   // Drag handlers for panel
   const handlePanelDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -74,6 +76,9 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
     return () => {
       window.removeEventListener('mousemove', handlePanelDrag);
       window.removeEventListener('mouseup', handlePanelDragEnd);
+      if (longPressTimer.current) {
+        window.clearTimeout(longPressTimer.current);
+      }
     };
   }, []);
 
@@ -86,6 +91,15 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
       x: Math.floor((e.clientX - rect.left) * scaleX),
       y: Math.floor((e.clientY - rect.top) * scaleY),
     };
+  };
+
+  const liftStickerAtPoint = (x: number, y: number) => {
+    if (!canvas || !canvas.width || !canvas.height) return;
+    if (mode === 'select') {
+      floodFillSelect(x, y);
+    } else {
+      refineBrush(x, y, true);
+    }
   };
 
   const floodFillSelect = (startX: number, startY: number) => {
@@ -175,9 +189,16 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
     setIsDrawing(true);
     const { x, y } = getCanvasCoordinates(e);
 
-    if (mode === 'select') {
-      floodFillSelect(x, y);
-    } else {
+    longPressFired.current = false;
+    if (longPressTimer.current) {
+      window.clearTimeout(longPressTimer.current);
+    }
+    longPressTimer.current = window.setTimeout(() => {
+      longPressFired.current = true;
+      liftStickerAtPoint(x, y);
+    }, 400);
+
+    if (mode !== 'select') {
       refineBrush(x, y, e.button === 0); // Left click adds, right click removes
     }
   };
@@ -188,7 +209,15 @@ export function StickerLifter({ canvas, scale, onComplete, onCancel }: StickerLi
     refineBrush(x, y, e.buttons === 1);
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (longPressTimer.current) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    if (!longPressFired.current && mode === 'select') {
+      const { x, y } = getCanvasCoordinates(e);
+      liftStickerAtPoint(x, y);
+    }
     setIsDrawing(false);
   };
 
