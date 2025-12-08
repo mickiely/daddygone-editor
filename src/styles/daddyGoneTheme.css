@@ -111,11 +111,18 @@ h1, h2, h3, h4, h5, h6, button, label {
   font-size: 12px;
   letter-spacing: 0.08em;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, transform 80ms ease;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out,
+    box-shadow 120ms ease-out,
+    transform 120ms ease-out,
+    border-color 120ms ease-out;
 }
 
 .dg-button:hover {
   background: #0f0f0f;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 0 0 #000;
 }
 
 .dg-button:active {
@@ -128,9 +135,21 @@ h1, h2, h3, h4, h5, h6, button, label {
 }
 
 .dg-button--active {
-  background: var(--dg-button-active);
-  color: var(--dg-button-text);
-  box-shadow: inset 0 0 0 1px #fff;
+  background-color: #020617;
+  color: #fefce8;
+  border-color: #facc15;
+  box-shadow:
+    0 0 0 1px #fefce8,
+    0 0 6px #22c55e,
+    0 0 14px rgba(34, 197, 94, 0.9);
+  transform: translateY(-1px);
+}
+
+.dg-toolbox .dg-button.dg-button--active {
+  box-shadow:
+    0 0 0 1px #fefce8,
+    0 0 8px rgba(56, 189, 248, 0.9);
+  border-color: #38bdf8;
 }
 
 .dg-button--ghost {
@@ -145,7 +164,7 @@ h1, h2, h3, h4, h5, h6, button, label {
   background: var(--dg-panel);
   border: 1px solid var(--dg-border);
   border-radius: var(--dg-radius-panel);
-  box-shadow: inset 0 0 0 1px #000;
+  box-shadow: 0 0 0 2px #000, inset 0 0 0 1px #000;
   padding: 12px;
   overflow: auto;
 }
@@ -172,15 +191,149 @@ h1, h2, h3, h4, h5, h6, button, label {
   text-transform: uppercase;
   font-size: 12px;
   letter-spacing: 0.06em;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out,
+    box-shadow 120ms ease-out,
+    transform 120ms ease-out,
+    border-color 120ms ease-out;
 }
 
 .dg-tab--active {
-  background: var(--dg-button);
-  color: var(--dg-button-text);
-  box-shadow: inset 0 0 0 1px #fff;
+  background-color: #020617;
+  color: #fefce8;
+  border-color: #f97316;
+  box-shadow:
+    0 0 0 1px #fefce8,
+    0 0 6px rgba(249, 115, 22, 0.9);
+  transform: translateY(-1px);
+}
+
+.dg-tab:not(.dg-tab--active):hover {
+  background-color: #111827;
+  color: #e5e7eb;
 }
 
 .dg-status {
   font-size: 11px;
   color: var(--dg-text-muted);
+}
+
+/* Theme variants -------------------------------------------------- */
+
+.dg-window--light {
+  color: #000000;
+  background-color: #b3b3b3;
+}
+
+.dg-window--dark {
+  background-color: #020617;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      rgba(15, 23, 42, 1) 0,
+      rgba(15, 23, 42, 1) 1px,
+      rgba(15, 23, 42, 0.9) 1px,
+      rgba(15, 23, 42, 0.9) 3px
+    );
+  color: #e5e7eb;
+}
+
+/* Header bar */
+.dg-window--light .dg-toolbar {
+  background-color: #ffffff;
+  color: #000000;
+  border-bottom: 2px solid #000000;
+}
+
+.dg-window--dark .dg-toolbar {
+  background-color: #020617;
+  color: #e5e7eb;
+  border-bottom: 2px solid #000000;
+}
+
+/* Primary buttons */
+.dg-window--light .dg-button {
+  background-color: #ffffff;
+  color: #000000;
+  border: 2px solid #000000;
+  box-shadow: none;
+}
+
+.dg-window--light .dg-button.dg-button--active {
+  background-color: #020617;
+  color: #fefce8;
+  border-color: #facc15;
+  box-shadow:
+    0 0 0 1px #fefce8,
+    0 0 6px #22c55e,
+    0 0 14px rgba(34, 197, 94, 0.9);
+}
+
+.dg-window--dark .dg-button {
+  background-color: #111111;
+  color: #f5f5f5;
+  border: 1px solid #000000;
+}
+
+.dg-window--dark .dg-button.dg-button--active {
+  background-color: #020617;
+  color: #fefce8;
+  border-color: #facc15;
+  box-shadow:
+    0 0 0 1px #fefce8,
+    0 0 6px #22c55e,
+    0 0 14px rgba(34, 197, 94, 0.9);
+}
+
+/* Right-side tabs */
+.dg-window--light .dg-tab {
+  background-color: #ffffff;
+  color: #000000;
+  border: 1px solid #000000;
+}
+
+.dg-window--light .dg-tab.dg-tab--active {
+  background-color: #020617;
+  color: #fefce8;
+  border-color: #f97316;
+  box-shadow:
+    0 0 0 1px #fefce8,
+    0 0 6px rgba(249, 115, 22, 0.9);
+}
+
+.dg-window--dark .dg-tab {
+  background-color: #111111;
+  color: #f5f5f5;
+  border: 1px solid #000000;
+}
+
+.dg-window--dark .dg-tab.dg-tab--active {
+  background-color: #020617;
+  color: #fefce8;
+  border-color: #f97316;
+  box-shadow:
+    0 0 0 1px #fefce8,
+    0 0 6px rgba(249, 115, 22, 0.9);
+}
+
+/* Left toolbox title strip */
+.dg-window--light .dg-toolbox-title {
+  background-color: #ffffff;
+  color: #000000;
+  border-bottom: 1px solid #000000;
+}
+
+.dg-window--dark .dg-toolbox-title {
+  background-color: #111111;
+  color: #f5f5f5;
+  border-bottom: 1px solid #000000;
+}
+
+.dg-window--light .dg-toolbox .dg-button.dg-button--active,
+.dg-window--dark .dg-toolbox .dg-button.dg-button--active {
+  box-shadow:
+    0 0 0 1px #fefce8,
+    0 0 8px rgba(56, 189, 248, 0.9);
+  border-color: #38bdf8;
 }
