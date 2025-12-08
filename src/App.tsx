@@ -6,7 +6,6 @@ import { ColorAdjustments, Adjustments } from './components/ColorAdjustments';
 import { FiltersPanel, FilterSettings } from './components/FiltersPanel';
 import { TemplateGallery } from './components/TemplateGallery';
 import { CanvasSizeDialog } from './components/CanvasSizeDialog';
-import { ShapeTools } from './components/ShapeTools';
 import { TextLayer, TextBox } from './components/TextLayer';
 import { TextEditor } from './components/TextEditor';
 import { CropTool } from './components/CropTool';
@@ -19,9 +18,6 @@ import { LayerCanvas } from './components/LayerCanvas';
 import { GeminiKeyDialog } from './components/GeminiKeyDialog';
 import { Layer } from './components/LayerItem';
 import { detectLayersWithAI, extractLayerFromBounds } from './components/ai-layer-detection';
-import { Button } from './components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { Separator } from './components/ui/separator';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { Toaster } from './components/ui/sonner';
@@ -40,6 +36,8 @@ export default function App() {
   const [history, setHistory] = useState<HistoryState[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [scale, setScale] = useState(1);
+  const [isColorBookMode, setIsColorBookMode] = useState(false);
+  const [colorBookBase, setColorBookBase] = useState<ImageData | null>(null);
   
   // Text boxes
   const [textBoxes, setTextBoxes] = useState<TextBox[]>([]);
@@ -72,6 +70,7 @@ export default function App() {
   const [showCanvasSizeDialog, setShowCanvasSizeDialog] = useState(false);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [showGeminiKeyDialog, setShowGeminiKeyDialog] = useState(false);
+  const [showKillColourDialog, setShowKillColourDialog] = useState(false);
   
   // Layers system
   const [imageLayers, setImageLayers] = useState<Layer[]>([]);
@@ -105,19 +104,32 @@ export default function App() {
   const drawingLayerRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Calculate scale for display
+  // Calculate scale for display so the canvas always fits in the viewport
   useEffect(() => {
-    if (originalImage && containerRef.current) {
-      const container = containerRef.current.getBoundingClientRect();
-      const maxWidth = container.width - 100;
-      const maxHeight = container.height - 100;
-      
-      const scaleX = maxWidth / originalImage.width;
-      const scaleY = maxHeight / originalImage.height;
+    if (!originalImage) return;
+
+    const updateScale = () => {
+      if (!containerRef.current) return;
+
+      const rect = containerRef.current.getBoundingClientRect();
+
+      // Space available for the canvas area
+      const availableWidth = Math.max(rect.width - 40, 100);
+      const availableHeight = Math.max(window.innerHeight - rect.top - 40, 100);
+
+      const scaleX = availableWidth / originalImage.width;
+      const scaleY = availableHeight / originalImage.height;
+
       const newScale = Math.min(scaleX, scaleY, 1);
-      
       setScale(newScale);
-    }
+    };
+
+    updateScale();
+    window.addEventListener('resize', updateScale);
+
+    return () => {
+      window.removeEventListener('resize', updateScale);
+    };
   }, [originalImage]);
 
   // Initialize canvas when image is loaded
@@ -305,6 +317,8 @@ export default function App() {
       setOriginalImage(img);
       setTextBoxes([]);
       setSelectedTextBoxId(null);
+      setIsColorBookMode(false);
+      setColorBookBase(null);
       toast.success('Image loaded successfully!');
     };
     img.src = URL.createObjectURL(file);
@@ -407,6 +421,463 @@ export default function App() {
         ctx.fillRect(x, y, pixelSize, pixelSize);
       }
     }
+  };
+
+  // In Color Book mode, treat very dark pixels from the base line-art
+  // as "ink" that we never overwrite with fills.
+  const isColorBookEdgePixel = (x: number, y: number, base: ImageData | null) => {
+    if (!base) return false;
+
+    const width = base.width;
+    const height = base.height;
+    const cx = Math.floor(x);
+    const cy = Math.floor(y);
+
+    if (cx < 0 || cx >= width || cy < 0 || cy >= height) return false;
+
+    const i = (cy * width + cx) * 4;
+    const r = base.data[i];
+    const g = base.data[i + 1];
+    const b = base.data[i + 2];
+    const brightness = (r + g + b) / 3;
+
+    // Anything this dark in the base is outline ink
+    return brightness < 80;
+  };
+
+  // Restamp the stored crisp line-art on top of the current canvas (multiply blend)
+  const reapplyColorBookLines = (
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    base: ImageData | null
+  ) => {
+    if (!isColorBookMode || !base) return;
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = base.width;
+    tempCanvas.height = base.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return;
+
+    tempCtx.putImageData(base, 0, 0);
+
+    ctx.save();
+    // Because base is pure black/white, multiply keeps colours and stamps black ink on top
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.drawImage(tempCanvas, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  };
+
+  // Color Book Mode: convert to clean black outlines on white like a colouring book
+  const applyColorBookMode = () => {
+    if (!canvasRef.current) {
+      toast.error('Load an image first');
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const src = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const { data, width, height } = src;
+
+    // 1) Convert to grayscale buffer
+    const gray = new Float32Array(width * height);
+    let darkCount = 0;
+    let midCount = 0;
+    let lightCount = 0;
+    const totalPixels = width * height;
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const v = 0.299 * r + 0.587 * g + 0.114 * b;
+      gray[p] = v;
+      if (v < 80) {
+        darkCount++;
+      } else if (v > 200) {
+        lightCount++;
+      } else {
+        midCount++;
+      }
+    }
+
+    const midRatio = midCount / totalPixels;
+
+    // Fast path: already line art.
+    // Instead of keeping all dark pixels (which fills whole areas),
+    // we extract ONLY the outline pixels where black touches white.
+    if (midRatio < 0.12) {
+      // 1) Binary ink mask: dark = ink, light = paper
+      const inkMask = new Uint8Array(width * height);
+      for (let p = 0; p < totalPixels; p++) {
+        if (gray[p] < 150) {
+          inkMask[p] = 1;
+        }
+      }
+
+      // 2) Outline mask: keep only ink pixels that border at least one non-ink neighbour
+      const outlineMask = new Uint8Array(width * height);
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          const i = y * width + x;
+          if (!inkMask[i]) continue;
+
+          let touchesPaper = false;
+          for (let ky = -1; ky <= 1 && !touchesPaper; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              if (kx === 0 && ky === 0) continue;
+              const xx = x + kx;
+              const yy = y + ky;
+              const j = yy * width + xx;
+              if (!inkMask[j]) {
+                touchesPaper = true;
+                break;
+              }
+            }
+          }
+
+          if (touchesPaper) {
+            outlineMask[i] = 1;
+          }
+        }
+      }
+
+      // 3) Optional: dilate outline one pixel so lines stay chunky
+      const dilated = new Uint8Array(width * height);
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          const i = y * width + x;
+          if (!outlineMask[i]) continue;
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              const xx = x + kx;
+              const yy = y + ky;
+              if (xx < 0 || xx >= width || yy < 0 || yy >= height) continue;
+              const j = yy * width + xx;
+              dilated[j] = 1;
+            }
+          }
+        }
+      }
+
+      // 4) Output pure black outlines on white
+      const out = ctx.createImageData(width, height);
+      const outData = out.data;
+      for (let p = 0; p < totalPixels; p++) {
+        const o = p * 4;
+        if (dilated[p]) {
+          outData[o] = 0;
+          outData[o + 1] = 0;
+          outData[o + 2] = 0;
+          outData[o + 3] = 255;
+        } else {
+          outData[o] = 255;
+          outData[o + 1] = 255;
+          outData[o + 2] = 255;
+          outData[o + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(out, 0, 0);
+
+      // Save this pure outline base so Reset in colour-book mode goes back here
+      setColorBookBase(out);
+      setIsColorBookMode(true);
+
+      // Reset live filters/adjustments so sliders start fresh from the new base
+      setFilters({
+        blur: 0,
+        sharpen: 0,
+        grayscale: 0,
+        sepia: 0,
+        invert: 0,
+        pixelate: 0,
+      });
+      setAdjustments({
+        brightness: 0,
+        contrast: 0,
+        saturation: 0,
+        hue: 0,
+        temperature: 0,
+        tint: 0,
+      });
+
+      saveToHistory();
+      toast.success('Color book line-art page ready');
+      return;
+    }
+
+    // 2) Stronger blur to knock out halftone / noise
+    const blurRadius = 2; // 5x5 kernel
+    const blurred = new Float32Array(gray.length);
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let sum = 0;
+        let count = 0;
+        for (let ky = -blurRadius; ky <= blurRadius; ky++) {
+          const yy = y + ky;
+          if (yy < 0 || yy >= height) continue;
+          for (let kx = -blurRadius; kx <= blurRadius; kx++) {
+            const xx = x + kx;
+            if (xx < 0 || xx >= width) continue;
+            sum += gray[yy * width + xx];
+            count++;
+          }
+        }
+        blurred[y * width + x] = sum / count;
+      }
+    }
+
+    // 3) Sobel edge detection with a higher threshold to ignore texture
+    const edgeMask = new Uint8Array(width * height);
+    const threshold = 110; // higher => keep only strong structure edges
+
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const i = y * width + x;
+
+        const gxm1ym1 = blurred[i - width - 1];
+        const gx0ym1 = blurred[i - width];
+        const gxp1ym1 = blurred[i - width + 1];
+        const gxm1y = blurred[i - 1];
+        const gxp1y = blurred[i + 1];
+        const gxm1yp1 = blurred[i + width - 1];
+        const gx0yp1 = blurred[i + width];
+        const gxp1yp1 = blurred[i + width + 1];
+
+        const gx =
+          -gxm1ym1 - 2 * gx0ym1 - gxp1ym1 +
+          gxm1yp1 + 2 * gx0yp1 + gxp1yp1;
+
+        const gy =
+          -gxm1ym1 - 2 * gxm1y - gxm1yp1 +
+          gxp1ym1 + 2 * gxp1y + gxp1yp1;
+
+        const mag = Math.sqrt(gx * gx + gy * gy);
+        edgeMask[i] = mag > threshold ? 1 : 0;
+      }
+    }
+
+    // 4) Remove speckles: keep only pixels that have enough edge neighbours
+    const cleaned = new Uint8Array(edgeMask.length);
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const i = y * width + x;
+        if (!edgeMask[i]) continue;
+        let neighbours = 0;
+        for (let ky = -1; ky <= 1; ky++) {
+          for (let kx = -1; kx <= 1; kx++) {
+            if (kx === 0 && ky === 0) continue;
+            const j = (y + ky) * width + (x + kx);
+            if (edgeMask[j]) neighbours++;
+          }
+        }
+        // Require at least 4 neighbours so tiny dots disappear
+        if (neighbours >= 4) {
+          cleaned[i] = 1;
+        }
+      }
+    }
+
+    // 5) Dilate to thicken the remaining lines a little
+    const dilated = new Uint8Array(edgeMask.length);
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const i = y * width + x;
+        if (!cleaned[i]) continue;
+        for (let ky = -1; ky <= 1; ky++) {
+          for (let kx = -1; kx <= 1; kx++) {
+            const yy = y + ky;
+            const xx = x + kx;
+            if (xx < 0 || xx >= width || yy < 0 || yy >= height) continue;
+            dilated[yy * width + xx] = 1;
+          }
+        }
+      }
+    }
+
+    // 6) Output: solid black lines on pure white background
+    const out = ctx.createImageData(width, height);
+    const outData = out.data;
+    for (let i = 0; i < width * height; i++) {
+      const o = i * 4;
+      if (dilated[i] === 1) {
+        outData[o] = 0;
+        outData[o + 1] = 0;
+        outData[o + 2] = 0;
+        outData[o + 3] = 255;
+      } else {
+        outData[o] = 255;
+        outData[o + 1] = 255;
+        outData[o + 2] = 255;
+        outData[o + 3] = 255;
+      }
+    }
+
+    ctx.putImageData(out, 0, 0);
+
+    // Save this pure line-art base so Reset in colour-book mode goes back here
+    setColorBookBase(out);
+    setIsColorBookMode(true);
+
+    // Reset live filters/adjustments so sliders start fresh from the new base
+    setFilters({
+      blur: 0,
+      sharpen: 0,
+      grayscale: 0,
+      sepia: 0,
+      invert: 0,
+      pixelate: 0,
+    });
+    setAdjustments({
+      brightness: 0,
+      contrast: 0,
+      saturation: 0,
+      hue: 0,
+      temperature: 0,
+      tint: 0,
+    });
+
+    saveToHistory();
+    toast.success('Color book line-art page ready');
+  };
+
+  // Strip all coloured pixels, keep dark neutral ink pixels
+  const stripColorToInk = () => {
+    if (!canvasRef.current) {
+      toast.error('Load an image first');
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const totalPixels = canvas.width * canvas.height;
+
+    for (let p = 0; p < totalPixels; p++) {
+      const o = p * 4;
+      const r = data[o];
+      const g = data[o + 1];
+      const b = data[o + 2];
+      const a = data[o + 3];
+
+      if (a === 0) continue; // already transparent, leave it
+
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const chroma = max - min;               // how "colourful" it is
+      const brightness = (r + g + b) / 3;     // overall light/dark
+
+      // Heuristic:
+      // - very dark pixels are likely ink (even if slightly coloured)
+      // - mid-dark neutral pixels (low chroma) are also ink
+      // - anything reasonably bright AND with chroma is "colour" -> kill it
+      const isVeryDark = brightness < 70;
+      const isNeutralDark = brightness < 130 && chroma < 20;
+
+      const keepAsInk = isVeryDark || isNeutralDark;
+
+      if (!keepAsInk) {
+        // turn it into clean white paper
+        data[o] = 255;
+        data[o + 1] = 255;
+        data[o + 2] = 255;
+        data[o + 3] = 255;
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    // Treat this as a colour-book base as well
+    setColorBookBase(imageData);
+    setIsColorBookMode(true);
+
+    // Reset sliders so you’re starting clean from this new base
+    setFilters({
+      blur: 0,
+      sharpen: 0,
+      grayscale: 0,
+      sepia: 0,
+      invert: 0,
+      pixelate: 0,
+    });
+    setAdjustments({
+      brightness: 0,
+      contrast: 0,
+      saturation: 0,
+      hue: 0,
+      temperature: 0,
+      tint: 0,
+    });
+
+    saveToHistory();
+    toast.success('Stripped colour, kept ink');
+  };
+
+  // Kill a specific colour everywhere on the canvas
+  const killColorEverywhere = (makeTransparent: boolean) => {
+    if (!canvasRef.current) {
+      toast.error('Load an image first');
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const totalPixels = canvas.width * canvas.height;
+
+    // Target colour from current swatch
+    const target = hexToRgb(selectedColor);
+    const tolerance = magicRemoveTolerance;
+
+    let removed = 0;
+
+    for (let p = 0; p < totalPixels; p++) {
+      const o = p * 4;
+      const r = data[o];
+      const g = data[o + 1];
+      const b = data[o + 2];
+      const a = data[o + 3];
+
+      if (a === 0) continue;
+
+      if (colorsMatch([r, g, b], target, tolerance)) {
+        if (makeTransparent) {
+          // Turn matching pixels fully transparent
+          data[o + 3] = 0;
+        } else {
+          // Turn matching pixels into clean white paper
+          data[o] = 255;
+          data[o + 1] = 255;
+          data[o + 2] = 255;
+          data[o + 3] = 255;
+        }
+        removed++;
+      }
+    }
+
+    if (removed === 0) {
+      toast.error('No pixels matched that colour – try changing tolerance or pick another swatch');
+      return;
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    if (isColorBookMode && colorBookBase && canvas) {
+      reapplyColorBookLines(ctx, canvas, colorBookBase);
+    }
+
+    saveToHistory();
+    toast.success(`Removed ${removed.toLocaleString()} pixels`);
   };
 
   // Text box functions
@@ -636,6 +1107,9 @@ export default function App() {
     if (!canvas || !drawingLayer || !ctx || !drawCtx) return;
 
     ctx.drawImage(drawingLayer, 0, 0);
+    if (isColorBookMode && colorBookBase) {
+      reapplyColorBookLines(ctx, canvas, colorBookBase);
+    }
     drawCtx.clearRect(0, 0, drawingLayer.width, drawingLayer.height);
     saveToHistory();
   };
@@ -700,13 +1174,24 @@ export default function App() {
       
       if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) continue;
 
+      if (isColorBookMode && isColorBookEdgePixel(x, y, colorBookBase)) {
+        continue;
+      }
+
       const currentColor = getPixelColor(data, x, y, canvas.width);
       
       // Must match target color within tolerance
       if (!colorsMatch(currentColor, targetColor, fillTolerance)) continue;
 
-      setPixelColor(data, x, y, canvas.width, fillColor);
-      pixelsFilled++;
+      // In Color Book mode, never overwrite the line-art ink pixels
+      if (isColorBookMode && isColorBookEdgePixel(x, y, colorBookBase)) {
+        // Still count it as part of the region so the fill can cross,
+        // but keep the original black line.
+        pixelsFilled++;
+      } else {
+        setPixelColor(data, x, y, canvas.width, fillColor);
+        pixelsFilled++;
+      }
 
       // Add all 4 neighbors
       stack.push([x + 1, y]);
@@ -723,6 +1208,12 @@ export default function App() {
     }
 
     ctx.putImageData(imageData, 0, 0);
+
+    // In Colour Book mode, always restamp the crisp line-art on top
+    if (isColorBookMode && colorBookBase) {
+      reapplyColorBookLines(ctx, canvas, colorBookBase);
+    }
+
     saveToHistory();
     toast.success(`Filled ${pixelsFilled.toLocaleString()} pixels`);
   };
@@ -902,6 +1393,11 @@ export default function App() {
     });
 
     ctx.putImageData(imageData, 0, 0);
+
+    if (isColorBookMode && colorBookBase && canvas) {
+      reapplyColorBookLines(ctx, canvas, colorBookBase);
+    }
+
     saveToHistory();
     toast.success(`Removed ${toRemove.size} pixels!`);
   };
@@ -951,6 +1447,11 @@ export default function App() {
     }
 
     ctx.putImageData(imageData, 0, 0);
+
+    if (isColorBookMode && colorBookBase && canvas) {
+      reapplyColorBookLines(ctx, canvas, colorBookBase);
+    }
+
     saveToHistory();
 
     setAdjustments({
@@ -1201,6 +1702,26 @@ export default function App() {
 
   // Reset
   const handleReset = () => {
+    if (isColorBookMode && colorBookBase && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.putImageData(colorBookBase, 0, 0);
+        saveToHistory();
+        setAdjustments({
+          brightness: 0,
+          contrast: 0,
+          saturation: 0,
+          hue: 0,
+          temperature: 0,
+          tint: 0,
+        });
+        setTextBoxes([]);
+        setSelectedTextBoxId(null);
+        toast.success('Back to clean color book page');
+      }
+      return;
+    }
     if (originalImage && canvasRef.current) {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
@@ -1236,6 +1757,8 @@ export default function App() {
     setSelectedTextBoxId(null);
     setImageLayers([]);
     setSelectedLayerId(null);
+    setIsColorBookMode(false);
+    setColorBookBase(null);
     setAdjustments({
       brightness: 0,
       contrast: 0,
@@ -1411,437 +1934,422 @@ export default function App() {
   const hasImage = Boolean(originalImage);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-gray-950 text-white">
+    <div
+      className="dg-window"
+      style={{
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        backgroundColor: '#b3b3b3',
+        backgroundImage:
+          'repeating-linear-gradient(0deg, #8f8f8f 0, #8f8f8f 1px, #b3b3b3 1px, #b3b3b3 3px)',
+      }}
+    >
       <Toaster position="top-right" />
 
-      <header className="border-b border-gray-800 bg-gray-900/90 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-purple-600">
-              <Sparkles className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-lg font-semibold">Color Editor Pro</h1>
-              <p className="text-xs text-gray-400">AI Layers · Filters · Stickers · Templates · Full Editing Suite</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="border-gray-700 text-gray-200">
-              Preview
-            </Button>
-            <Button onClick={handleDownload} size="sm" className="bg-blue-600 hover:bg-blue-700">
-              <Download className="mr-2 h-4 w-4" />
-              Export
-            </Button>
+      <header className="dg-toolbar border-b-2 border-black bg-white px-3 py-2 flex items-center justify-between">
+        <div className="dg-toolbar-title flex items-center gap-2">
+          <Sparkles className="h-5 w-5" />
+          <div>
+            <div>Daddy Gone</div>
+            <small>Color Editor Pro</small>
           </div>
         </div>
 
-        <div className="mt-3 flex items-center justify-between text-sm text-gray-300">
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={() => setShowKeyboardShortcuts(true)}
-              variant="ghost"
-              size="sm"
-              title="Keyboard Shortcuts (?)"
-            >
-              <Keyboard className="h-4 w-4" />
-            </Button>
-            {!originalImage && (
-              <>
-                <Separator orientation="vertical" className="h-6 bg-gray-700" />
-                <Button onClick={() => setShowTemplateGallery(true)} variant="outline" size="sm">
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  Templates
-                </Button>
-                <Button onClick={() => setShowCanvasSizeDialog(true)} variant="outline" size="sm">
-                  <Maximize2 className="mr-2 h-4 w-4" />
-                  New Canvas
-                </Button>
-              </>
-            )}
-          </div>
-
-          {originalImage && (
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={handleNewImage}
-                variant="outline"
-                size="sm"
-              >
-                <FileUp className="mr-2 h-4 w-4" />
-                New
-              </Button>
-              <Button onClick={handleReset} variant="outline" size="sm">
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Reset
-              </Button>
-            </div>
+        <div className="flex items-center gap-2">
+          <button className="dg-button" onClick={() => setShowKeyboardShortcuts(true)}>
+            <Keyboard className="h-4 w-4" /> Keys
+          </button>
+          {!originalImage && (
+            <>
+              <button className="dg-button" onClick={() => setShowTemplateGallery(true)}>
+                <Sparkles className="h-4 w-4" /> Templates
+              </button>
+              <button className="dg-button" onClick={() => setShowCanvasSizeDialog(true)}>
+                <Maximize2 className="h-4 w-4" /> New Canvas
+              </button>
+            </>
           )}
+          {originalImage && (
+            <>
+              <button className="dg-button" onClick={handleNewImage}>
+                <FileUp className="h-4 w-4" /> New
+              </button>
+              <button className="dg-button" onClick={handleReset}>
+                <RotateCcw className="h-4 w-4" /> Reset
+              </button>
+            </>
+          )}
+          {/* Color Book button inserted here */}
+          <button
+            className={`dg-button ${isColorBookMode ? 'dg-button--active' : ''}`}
+            onClick={applyColorBookMode}
+            disabled={!originalImage}
+          >
+            <Wand2 className="h-4 w-4" /> Color Book
+          </button>
+          <button
+            className="dg-button"
+            onClick={stripColorToInk}
+            disabled={!originalImage}
+          >
+            <Droplet className="h-4 w-4" /> Strip Colour
+          </button>
+          <button
+            className="dg-button"
+            onClick={() => setShowKillColourDialog(true)}
+            disabled={!originalImage}
+          >
+            <Droplet className="h-4 w-4" /> Kill Colour
+          </button>
+          <button className="dg-button" onClick={handleUndo} disabled={historyIndex <= 0}>
+            <Undo className="h-4 w-4" /> Undo
+          </button>
+          <button className="dg-button" onClick={handleRedo} disabled={historyIndex >= history.length - 1}>
+            <Redo className="h-4 w-4" /> Redo
+          </button>
+          <button className="dg-button" onClick={handleFlipHorizontal}>
+            <FlipHorizontal className="h-4 w-4" /> Flip H
+          </button>
+          <button className="dg-button" onClick={handleFlipVertical}>
+            <FlipVertical className="h-4 w-4" /> Flip V
+          </button>
+          <button className="dg-button" onClick={handleRotate90}>
+            <RotateCw className="h-4 w-4" /> Rotate
+          </button>
+          <button className="dg-button" onClick={handleDownload}>
+            <Download className="h-4 w-4" /> Export
+          </button>
         </div>
       </header>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-gray-800 bg-gray-900/70 px-6 py-2">
-          <TabsList className="h-10 bg-gray-800/80">
-            <TabsTrigger value="tools" className="data-[state=active]:bg-gray-700">Tools</TabsTrigger>
-            <TabsTrigger value="layers" className="data-[state=active]:bg-gray-700">Layers</TabsTrigger>
-            <TabsTrigger value="adjust" className="data-[state=active]:bg-gray-700">Adjust</TabsTrigger>
-            <TabsTrigger value="filters" className="data-[state=active]:bg-gray-700">Filters</TabsTrigger>
-            <TabsTrigger value="text" className="data-[state=active]:bg-gray-700">Text</TabsTrigger>
-          </TabsList>
-
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={handleUndo}
-              disabled={historyIndex <= 0}
-              variant="ghost"
-              size="sm"
-            >
-              <Undo className="mr-2 h-4 w-4" />
-              Undo
-            </Button>
-            <Button
-              onClick={handleRedo}
-              disabled={historyIndex >= history.length - 1}
-              variant="ghost"
-              size="sm"
-            >
-              <Redo className="mr-2 h-4 w-4" />
-              Redo
-            </Button>
-            <Separator orientation="vertical" className="h-6" />
-            <Button onClick={handleFlipHorizontal} variant="ghost" size="sm" title="Flip Horizontal">
-              <FlipHorizontal className="h-4 w-4" />
-            </Button>
-            <Button onClick={handleFlipVertical} variant="ghost" size="sm" title="Flip Vertical">
-              <FlipVertical className="h-4 w-4" />
-            </Button>
-            <Button onClick={handleRotate90} variant="ghost" size="sm" title="Rotate 90°">
-              <RotateCw className="h-4 w-4" />
-            </Button>
+      <div
+        className="dg-main"
+        style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}
+      >
+        <aside className="dg-panel dg-toolbox bg-white border-r-2 border-black">
+          <div className="dg-toolbox-title">Toolbox</div>
+          <div className="flex flex-col gap-2">
+            {toolSidebarItems.map((tool) => (
+              <button
+                key={tool.value}
+                onClick={() => setSelectedTool(tool.value)}
+                className={`dg-button ${selectedTool === tool.value ? 'dg-button--active' : ''}`}
+              >
+                <tool.icon className="h-4 w-4" />
+                <span>{tool.label}</span>
+              </button>
+            ))}
           </div>
-        </div>
+          <div className="dg-toolbox-title" style={{ marginTop: 12 }}>Swatches</div>
+          <div className="grid grid-cols-4 gap-2">
+            {sidebarSwatches.map((color) => (
+              <button
+                key={color}
+                onClick={() => setSelectedColor(color)}
+                className="h-8 w-full border border-black"
+                style={{ backgroundColor: color, outline: selectedColor === color ? '2px solid #000' : 'none' }}
+                title={color}
+              />
+            ))}
+          </div>
+        </aside>
 
-        <div className="flex flex-1 overflow-hidden">
-          <aside className="flex w-72 flex-col border-r border-gray-800 bg-gray-900/80 backdrop-blur">
-            <div className="p-4">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Tools</p>
-              <div className="flex flex-col gap-2">
-                {toolSidebarItems.map((tool) => (
-                  <button
-                    key={tool.value}
-                    onClick={() => setSelectedTool(tool.value)}
-                    className={`flex items-center justify-between rounded-lg border px-3 py-2 text-sm transition ${
-                      selectedTool === tool.value
-                        ? 'border-blue-500 bg-blue-600 text-white shadow-lg'
-                        : 'border-gray-800 bg-gray-900/80 text-gray-200 hover:border-gray-700 hover:bg-gray-800'
-                    }`}
+        <section
+          className="dg-panel dg-canvas border-x-2 border-black"
+          ref={containerRef}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'center',
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            backgroundColor: '#b3b3b3',
+            backgroundImage:
+              'repeating-linear-gradient(0deg, #8f8f8f 0, #8f8f8f 1px, #b3b3b3 1px, #b3b3b3 3px)',
+          }}
+        >
+          {!hasImage ? (
+            <div className="w-full max-w-2xl">
+              <ImageUploader onImageUpload={handleImageUpload} isLoading={false} />
+            </div>
+          ) : (
+            <div className="relative inline-block">
+              <div className="relative">
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    width: `${canvasRef.current?.width ? canvasRef.current.width * scale : 0}px`,
+                    height: `${canvasRef.current?.height ? canvasRef.current.height * scale : 0}px`,
+                    imageRendering: 'auto',
+                  }}
+                />
+
+                <canvas
+                  ref={drawingLayerRef}
+                  className={`${isRemovingObject || isCropping ? 'pointer-events-none' : 'pointer-events-auto'}`}
+                  onMouseDown={startDrawing}
+                  onMouseMove={continueDrawing}
+                  onMouseUp={stopDrawing}
+                  onMouseLeave={stopDrawing}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: `${drawingLayerRef.current?.width ? drawingLayerRef.current.width * scale : 0}px`,
+                    height: `${drawingLayerRef.current?.height ? drawingLayerRef.current.height * scale : 0}px`,
+                    cursor: selectedTool === 'fill' ? 'crosshair' : selectedTool === 'eraser' ? 'cell' : selectedTool === 'text' ? 'text' : selectedTool === 'magicremove' ? 'pointer' : 'crosshair',
+                  }}
+                />
+
+                {canvasRef.current && (
+                  <div
+                    className="pointer-events-none"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: `${canvasRef.current.width * scale}px`,
+                      height: `${canvasRef.current.height * scale}px`,
+                      transform: `scale(${scale})`,
+                      transformOrigin: 'top left',
+                    }}
                   >
-                    <div className="flex items-center gap-2">
-                      <tool.icon className="h-4 w-4" />
-                      <span>{tool.label}</span>
-                    </div>
-                    {selectedTool === tool.value && <span className="text-[10px] uppercase tracking-wide text-white/80">Active</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-auto border-t border-gray-800 p-4">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Swatches</p>
-              <div className="grid grid-cols-6 gap-2">
-                {sidebarSwatches.map((color) => (
-                  <button
-                    key={color}
-                    onClick={() => setSelectedColor(color)}
-                    className={`h-8 w-full rounded-md transition hover:scale-105 ${
-                      selectedColor === color ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-gray-900' : ''
-                    }`}
-                    style={{ backgroundColor: color }}
-                    title={color}
-                  />
-                ))}
-              </div>
-            </div>
-          </aside>
-
-          <div className="flex flex-1 overflow-hidden">
-            <div
-              ref={containerRef}
-              className="flex flex-1 items-center justify-center overflow-auto bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-gray-900 to-gray-950 p-8"
-            >
-              {!hasImage ? (
-                <div className="flex w-full max-w-3xl items-center justify-center">
-                  <div className="w-full max-w-2xl rounded-2xl border border-dashed border-gray-800 bg-gray-900/60 p-6 shadow-2xl">
-                    <ImageUploader onImageUpload={handleImageUpload} isLoading={false} />
+                    <TextLayer
+                      textBoxes={textBoxes}
+                      selectedTextBoxId={selectedTextBoxId}
+                      onSelectTextBox={(id) => {
+                        setSelectedTextBoxId(id);
+                        setActiveTab('text');
+                      }}
+                      onUpdateTextBox={handleUpdateTextBox}
+                      onDeleteTextBox={handleDeleteTextBox}
+                      canvasWidth={canvasRef.current.width}
+                      canvasHeight={canvasRef.current.height}
+                      scale={scale}
+                    />
                   </div>
-                </div>
-              ) : (
-                <div className="relative inline-block">
-                  <div className="relative shadow-2xl">
-                    {/* Main canvas */}
-                    <canvas
-                      ref={canvasRef}
-                      className="block rounded-lg"
-                      style={{
-                        width: `${canvasRef.current?.width ? canvasRef.current.width * scale : 0}px`,
-                        height: `${canvasRef.current?.height ? canvasRef.current.height * scale : 0}px`,
-                        imageRendering: 'auto',
+                )}
+
+                {canvasRef.current && imageLayers.length > 0 && (
+                  <div
+                    className="pointer-events-none"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: `${canvasRef.current.width * scale}px`,
+                      height: `${canvasRef.current.height * scale}px`,
+                    }}
+                  >
+                    <LayerCanvas
+                      layers={imageLayers}
+                      selectedLayerId={selectedLayerId}
+                      scale={scale}
+                      onLayerUpdate={handleLayerUpdate}
+                      onLayerSelect={(id) => {
+                        setSelectedLayerId(id);
+                        if (id !== null) setActiveTab('layers');
                       }}
+                      canvasWidth={canvasRef.current.width}
+                      canvasHeight={canvasRef.current.height}
                     />
+                  </div>
+                )}
 
-                    {/* Drawing layer */}
-                    <canvas
-                      ref={drawingLayerRef}
-                      className={`absolute inset-0 ${isRemovingObject || isCropping ? 'pointer-events-none' : 'pointer-events-auto'}`}
-                      onMouseDown={startDrawing}
-                      onMouseMove={continueDrawing}
-                      onMouseUp={stopDrawing}
-                      onMouseLeave={stopDrawing}
+                {isCropping && canvasRef.current && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: `${canvasRef.current.width * scale}px`,
+                      height: `${canvasRef.current.height * scale}px`,
+                    }}
+                  >
+                    <div
                       style={{
-                        width: `${drawingLayerRef.current?.width ? drawingLayerRef.current.width * scale : 0}px`,
-                        height: `${drawingLayerRef.current?.height ? drawingLayerRef.current.height * scale : 0}px`,
-                        cursor: selectedTool === 'fill' ? 'crosshair' : selectedTool === 'eraser' ? 'cell' : selectedTool === 'text' ? 'text' : selectedTool === 'magicremove' ? 'pointer' : 'crosshair',
+                        transform: `scale(${scale})`,
+                        transformOrigin: 'top left',
+                        width: `${canvasRef.current.width}px`,
+                        height: `${canvasRef.current.height}px`,
                       }}
-                    />
-
-                    {/* Text layer */}
-                    {canvasRef.current && (
-                      <div
-                        className="pointer-events-none absolute inset-0"
-                        style={{
-                          width: `${canvasRef.current.width * scale}px`,
-                          height: `${canvasRef.current.height * scale}px`,
-                          transform: `scale(${scale})`,
-                          transformOrigin: 'top left',
-                        }}
-                      >
-                        <TextLayer
-                          textBoxes={textBoxes}
-                          selectedTextBoxId={selectedTextBoxId}
-                          onSelectTextBox={(id) => {
-                            setSelectedTextBoxId(id);
-                            setActiveTab('text');
-                          }}
-                          onUpdateTextBox={handleUpdateTextBox}
-                          onDeleteTextBox={handleDeleteTextBox}
-                          canvasWidth={canvasRef.current.width}
-                          canvasHeight={canvasRef.current.height}
-                          scale={scale}
-                        />
-                      </div>
-                    )}
-
-                    {/* Layer Canvas Overlay */}
-                    {canvasRef.current && imageLayers.length > 0 && (
-                      <div
-                        className="pointer-events-none absolute inset-0"
-                        style={{
-                          width: `${canvasRef.current.width * scale}px`,
-                          height: `${canvasRef.current.height * scale}px`,
-                        }}
-                      >
-                        <LayerCanvas
-                          layers={imageLayers}
-                          selectedLayerId={selectedLayerId}
-                          scale={scale}
-                          onLayerUpdate={handleLayerUpdate}
-                          onLayerSelect={(id) => {
-                            setSelectedLayerId(id);
-                            if (id !== null) setActiveTab('layers');
-                          }}
-                          canvasWidth={canvasRef.current.width}
-                          canvasHeight={canvasRef.current.height}
-                        />
-                      </div>
-                    )}
-
-                    {/* Crop tool overlay */}
-                    {isCropping && canvasRef.current && (
-                      <div
-                        className="absolute inset-0"
-                        style={{
-                          width: `${canvasRef.current.width * scale}px`,
-                          height: `${canvasRef.current.height * scale}px`,
-                        }}
-                      >
-                        <div
-                          style={{
-                            transform: `scale(${scale})`,
-                            transformOrigin: 'top left',
-                            width: `${canvasRef.current.width}px`,
-                            height: `${canvasRef.current.height}px`,
-                          }}
-                        >
-                          <CropTool
-                            canvasWidth={canvasRef.current.width}
-                            canvasHeight={canvasRef.current.height}
-                            onCrop={handleCrop}
-                            onCancel={() => {
-                              setIsCropping(false);
-                              setSelectedTool('brush');
-                            }}
-                            scale={scale}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Object remover overlay */}
-                    {isRemovingObject && canvasRef.current && (
-                      <div
-                        className="pointer-events-none absolute inset-0"
-                        style={{
-                          width: `${canvasRef.current.width * scale}px`,
-                          height: `${canvasRef.current.height * scale}px`,
-                        }}
-                      >
-                        <ObjectRemover
-                          canvas={canvasRef.current}
-                          scale={1}
-                          onComplete={() => {
-                            setIsRemovingObject(false);
-                            setSelectedTool('brush');
-                            saveToHistory();
-                            toast.success('Object removed');
-                          }}
-                          onCancel={() => {
-                            setIsRemovingObject(false);
-                            setSelectedTool('brush');
-                          }}
-                        />
-                      </div>
-                    )}
-
-                    {/* Sticker Lifter overlay */}
-                    {isLiftingSticker && canvasRef.current && (
-                      <StickerLifter
-                        canvas={canvasRef.current}
-                        scale={scale}
-                        onComplete={(stickerCanvas) => {
-                          const ctx = canvasRef.current?.getContext('2d');
-                          if (ctx) {
-                            ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
-                            ctx.drawImage(stickerCanvas, 0, 0);
-                            saveToHistory();
-                            toast.success('Sticker applied to canvas!');
-                          }
-                          setIsLiftingSticker(false);
-                          setSelectedTool('brush');
-                        }}
+                    >
+                      <CropTool
+                        canvasWidth={canvasRef.current.width}
+                        canvasHeight={canvasRef.current.height}
+                        onCrop={handleCrop}
                         onCancel={() => {
-                          setIsLiftingSticker(false);
+                          setIsCropping(false);
                           setSelectedTool('brush');
                         }}
+                        scale={scale}
                       />
-                    )}
+                    </div>
                   </div>
+                )}
+
+                {isRemovingObject && canvasRef.current && (
+                  <div
+                    className="pointer-events-none"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: `${canvasRef.current.width * scale}px`,
+                      height: `${canvasRef.current.height * scale}px`,
+                    }}
+                  >
+                    <ObjectRemover
+                      canvas={canvasRef.current}
+                      scale={1}
+                      onComplete={() => {
+                        setIsRemovingObject(false);
+                        setSelectedTool('brush');
+                        saveToHistory();
+                        toast.success('Object removed');
+                      }}
+                      onCancel={() => {
+                        setIsRemovingObject(false);
+                        setSelectedTool('brush');
+                      }}
+                    />
+                  </div>
+                )}
+
+                {isLiftingSticker && canvasRef.current && (
+                  <StickerLifter
+                    canvas={canvasRef.current}
+                    scale={scale}
+                    onComplete={(stickerCanvas) => {
+                      const ctx = canvasRef.current?.getContext('2d');
+                      if (ctx) {
+                        ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
+                        ctx.drawImage(stickerCanvas, 0, 0);
+                        saveToHistory();
+                        toast.success('Sticker applied to canvas!');
+                      }
+                      setIsLiftingSticker(false);
+                      setSelectedTool('brush');
+                    }}
+                    onCancel={() => {
+                      setIsLiftingSticker(false);
+                      setSelectedTool('brush');
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <aside
+          className="dg-panel dg-sidepanel bg-white border-l-2 border-black"
+          style={{ height: '100%', overflow: 'auto' }}
+        >
+          <div className="dg-tabs">
+            {['tools', 'layers', 'adjust', 'filters', 'text'].map((tab) => (
+              <button
+                key={tab}
+                className={`dg-tab ${activeTab === tab ? 'dg-tab--active' : ''}`}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
+          {hasImage ? (
+            <div className="flex flex-col gap-3 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+              {activeTab === 'tools' && (
+                <ColorTools
+                  selectedTool={selectedTool}
+                  onToolChange={setSelectedTool}
+                  brushSize={brushSize}
+                  onBrushSizeChange={setBrushSize}
+                  opacity={opacity}
+                  onOpacityChange={setOpacity}
+                  selectedColor={selectedColor}
+                  onColorChange={setSelectedColor}
+                  tolerance={magicRemoveTolerance}
+                  onToleranceChange={setMagicRemoveTolerance}
+                  hideToolGrid
+                />
+              )}
+
+              {activeTab === 'layers' && (
+                <LayersPanel
+                  layers={imageLayers}
+                  selectedLayerId={selectedLayerId}
+                  onSelectLayer={setSelectedLayerId}
+                  onToggleVisibility={handleToggleLayerVisibility}
+                  onDeleteLayer={handleDeleteLayer}
+                  onDuplicateLayer={handleDuplicateLayer}
+                  onReorderLayer={handleReorderLayer}
+                  onDetectLayers={handleDetectLayers}
+                  onAddImageLayer={handleAddImageLayer}
+                  isDetecting={isDetectingLayers}
+                />
+              )}
+
+              {activeTab === 'adjust' && (
+                <ColorAdjustments
+                  adjustments={adjustments}
+                  onAdjustmentChange={(key, value) =>
+                    setAdjustments((prev) => ({ ...prev, [key]: value }))
+                  }
+                  onReset={() =>
+                    setAdjustments({
+                      brightness: 0,
+                      contrast: 0,
+                      saturation: 0,
+                      hue: 0,
+                      temperature: 0,
+                      tint: 0,
+                    })
+                  }
+                  onApply={handleApplyAdjustments}
+                />
+              )}
+
+              {activeTab === 'filters' && (
+                <FiltersPanel
+                  filters={filters}
+                  onFilterChange={setFilters}
+                  onApplyPreset={handleApplyFilterPreset}
+                />
+              )}
+
+              {activeTab === 'text' && (
+                <TextEditor
+                  textBox={selectedTextBox}
+                  onUpdate={(updates) => {
+                    if (selectedTextBoxId) {
+                      handleUpdateTextBox(selectedTextBoxId, updates);
+                    }
+                  }}
+                />
+              )}
+
+              {isRemovingBackground && canvasRef.current && (
+                <div>
+                  <BackgroundRemover
+                    canvas={canvasRef.current}
+                    onComplete={() => {
+                      setIsRemovingBackground(false);
+                      setSelectedTool('brush');
+                      saveToHistory();
+                    }}
+                  />
                 </div>
               )}
             </div>
-
-            {hasImage ? (
-              <aside className="w-96 border-l border-gray-800 bg-gray-900/80 backdrop-blur overflow-y-auto">
-                <div className="space-y-4 p-4">
-                  <TabsContent value="tools" className="mt-0">
-                    <ColorTools
-                      selectedTool={selectedTool}
-                      onToolChange={setSelectedTool}
-                      brushSize={brushSize}
-                      onBrushSizeChange={setBrushSize}
-                      opacity={opacity}
-                      onOpacityChange={setOpacity}
-                      selectedColor={selectedColor}
-                      onColorChange={setSelectedColor}
-                      tolerance={magicRemoveTolerance}
-                      onToleranceChange={setMagicRemoveTolerance}
-                      hideToolGrid
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="layers" className="mt-0 h-full">
-                    <LayersPanel
-                      layers={imageLayers}
-                      selectedLayerId={selectedLayerId}
-                      onSelectLayer={setSelectedLayerId}
-                      onToggleVisibility={handleToggleLayerVisibility}
-                      onDeleteLayer={handleDeleteLayer}
-                      onDuplicateLayer={handleDuplicateLayer}
-                      onReorderLayer={handleReorderLayer}
-                      onDetectLayers={handleDetectLayers}
-                      onAddImageLayer={handleAddImageLayer}
-                      isDetecting={isDetectingLayers}
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="adjust" className="mt-0">
-                    <ColorAdjustments
-                      adjustments={adjustments}
-                      onAdjustmentChange={(key, value) =>
-                        setAdjustments((prev) => ({ ...prev, [key]: value }))
-                      }
-                      onReset={() =>
-                        setAdjustments({
-                          brightness: 0,
-                          contrast: 0,
-                          saturation: 0,
-                          hue: 0,
-                          temperature: 0,
-                          tint: 0,
-                        })
-                      }
-                      onApply={handleApplyAdjustments}
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="filters" className="mt-0">
-                    <FiltersPanel
-                      filters={filters}
-                      onFilterChange={setFilters}
-                      onApplyPreset={handleApplyFilterPreset}
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="text" className="mt-0">
-                    <TextEditor
-                      textBox={selectedTextBox}
-                      onUpdate={(updates) => {
-                        if (selectedTextBoxId) {
-                          handleUpdateTextBox(selectedTextBoxId, updates);
-                        }
-                      }}
-                    />
-                  </TabsContent>
-
-                  {isRemovingBackground && canvasRef.current && (
-                    <div className="border-t border-gray-800 pt-4">
-                      <BackgroundRemover
-                        canvas={canvasRef.current}
-                        onComplete={() => {
-                          setIsRemovingBackground(false);
-                          setSelectedTool('brush');
-                          saveToHistory();
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              </aside>
-            ) : (
-              <aside className="w-96 border-l border-gray-900/70 bg-gray-900/60 backdrop-blur-sm">
-                <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-10 text-center text-gray-400">
-                  <div className="rounded-full bg-gray-800/70 p-3">
-                    <Sparkles className="h-6 w-6 text-gray-300" />
-                  </div>
-                  <p className="text-sm font-medium text-gray-200">Panels available after you upload.</p>
-                  <p className="text-xs text-gray-400">Drop an image to unlock layers, adjustments, filters, and text controls.</p>
-                </div>
-              </aside>
-            )}
-          </div>
-        </div>
-      </Tabs>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <Sparkles className="h-6 w-6" />
+              <p className="text-sm">Upload an image to unlock panels.</p>
+            </div>
+          )}
+        </aside>
+      </div>
 
       {/* New Image Confirmation Dialog */}
       <AlertDialog open={showNewImageDialog} onOpenChange={setShowNewImageDialog}>
@@ -1865,6 +2373,35 @@ export default function App() {
               className="bg-blue-600 hover:bg-blue-700"
             >
               Yes, Start New
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={showKillColourDialog} onOpenChange={setShowKillColourDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Kill Colour</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remove every pixel that matches the selected swatch colour. Choose whether to make those pixels transparent or fill them with white.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                killColorEverywhere(true);
+                setShowKillColourDialog(false);
+              }}
+            >
+              Make Transparent
+            </AlertDialogAction>
+            <AlertDialogAction
+              onClick={() => {
+                killColorEverywhere(false);
+                setShowKillColourDialog(false);
+              }}
+            >
+              Fill With White
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
