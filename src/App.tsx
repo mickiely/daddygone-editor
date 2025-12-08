@@ -38,6 +38,7 @@ export default function App() {
   const [scale, setScale] = useState(1);
   const [isColorBookMode, setIsColorBookMode] = useState(false);
   const [colorBookBase, setColorBookBase] = useState<ImageData | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   
   // Text boxes
   const [textBoxes, setTextBoxes] = useState<TextBox[]>([]);
@@ -1935,7 +1936,7 @@ export default function App() {
 
   return (
     <div
-      className="dg-window"
+      className={`dg-window ${theme === 'light' ? 'dg-window--light' : 'dg-window--dark'}`}
       style={{
         height: '100vh',
         display: 'flex',
@@ -1958,6 +1959,12 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            className="dg-button"
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+          >
+            {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+          </button>
           <button className="dg-button" onClick={() => setShowKeyboardShortcuts(true)}>
             <Keyboard className="h-4 w-4" /> Keys
           </button>
@@ -1981,7 +1988,6 @@ export default function App() {
               </button>
             </>
           )}
-          {/* Color Book button inserted here */}
           <button
             className={`dg-button ${isColorBookMode ? 'dg-button--active' : ''}`}
             onClick={applyColorBookMode}
