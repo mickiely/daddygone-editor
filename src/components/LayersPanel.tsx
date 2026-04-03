@@ -88,16 +88,26 @@ export function LayersPanel({
               <div
                 key={layer.id}
                 onClick={() => !lockedLayers.has(layer.id) && onSelectLayer(layer.id)}
-                className={`group relative rounded-lg p-3 cursor-pointer transition-all ${
+                className={`group relative rounded-lg border p-3 cursor-pointer transition-all ${
                   selectedLayerId === layer.id
-                    ? 'bg-blue-600 ring-2 ring-blue-400'
-                    : 'bg-gray-800 hover:bg-gray-700'
+                    ? 'border-blue-400 bg-slate-900 ring-2 ring-blue-500 shadow-[0_0_14px_rgba(59,130,246,0.55)]'
+                    : 'border-gray-700 bg-gray-800 hover:border-gray-500 hover:bg-gray-700'
                 }`}
+                style={{ opacity: layer.isVisible ? 1 : 0.72 }}
               >
                 {/* Layer Preview & Info */}
                 <div className="flex items-center gap-3">
                   {/* Preview Thumbnail */}
-                  <div className="w-12 h-12 rounded bg-gray-900 border border-gray-700 flex items-center justify-center overflow-hidden flex-shrink-0">
+                  <div
+                    className="w-12 h-12 rounded border border-gray-700 flex items-center justify-center overflow-hidden flex-shrink-0"
+                    style={{
+                      backgroundColor: '#111827',
+                      backgroundImage:
+                        'linear-gradient(45deg, rgba(255,255,255,0.08) 25%, transparent 25%), linear-gradient(-45deg, rgba(255,255,255,0.08) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.08) 75%), linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.08) 75%)',
+                      backgroundSize: '10px 10px',
+                      backgroundPosition: '0 0, 0 5px, 5px -5px, -5px 0',
+                    }}
+                  >
                     {layer.type === 'image' && layer.src && (
                       <img src={layer.src} alt={layer.name} className="w-full h-full object-cover" />
                     )}
@@ -119,24 +129,29 @@ export function LayersPanel({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-white truncate">{layer.name}</p>
                     <p className="text-xs text-gray-400">
-                      {layer.type} • {Math.round(layer.opacity * 100)}% opacity
+                      {layer.type} • {Math.round(layer.opacity * 100)}% opacity {layer.isVisible ? '' : '• hidden'}
                     </p>
                   </div>
 
                   {/* Quick Actions */}
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 opacity-100">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         onToggleVisibility(layer.id);
                       }}
-                      className="p-1 hover:bg-gray-600 rounded transition-colors"
+                      className={`p-1 rounded transition-colors ${
+                        layer.isVisible
+                          ? 'text-cyan-300 hover:bg-gray-600'
+                          : 'text-gray-500 hover:bg-gray-600'
+                      }`}
                       title={layer.isVisible ? 'Hide' : 'Show'}
+                      aria-label={layer.isVisible ? 'Hide layer' : 'Show layer'}
                     >
                       {layer.isVisible ? (
-                        <Eye className="h-4 w-4 text-gray-300" />
+                        <Eye className="h-4 w-4" />
                       ) : (
-                        <EyeOff className="h-4 w-4 text-gray-500" />
+                        <EyeOff className="h-4 w-4" />
                       )}
                     </button>
                     <button
