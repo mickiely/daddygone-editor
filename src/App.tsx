@@ -2003,7 +2003,7 @@ export default function App() {
 
   return (
     <div
-      className={`dg-window ${theme === 'light' ? 'dg-window--light' : 'dg-window--dark'} h-screen w-screen flex flex-col overflow-hidden`}
+      className={`dg-window ${theme === 'light' ? 'dg-window--light' : 'dg-window--dark'} fixed inset-0 flex flex-col overflow-hidden bg-gray-900`}
       style={{
         backgroundColor: '#b3b3b3',
         backgroundImage:
@@ -2094,7 +2094,7 @@ export default function App() {
       </header>
 
       <div
-        className="dg-main flex-1 flex flex-row min-h-0 overflow-hidden"
+        className="dg-main flex-1 flex overflow-hidden"
       >
         <aside className="dg-panel dg-toolbox dg-shell-sidebar flex-none h-full overflow-y-auto pb-12 bg-white border-r-2 border-black">
           <div className="dg-toolbox-title">Toolbox</div>
