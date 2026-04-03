@@ -2025,7 +2025,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             className="dg-button"
             onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
@@ -2101,7 +2101,7 @@ export default function App() {
         className="dg-main"
         style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}
       >
-        <aside className="dg-panel dg-toolbox bg-white border-r-2 border-black">
+        <aside className="dg-panel dg-toolbox dg-shell-sidebar bg-white border-r-2 border-black">
           <div className="dg-toolbox-title">Toolbox</div>
           <div className="flex flex-col gap-2">
             {toolSidebarItems.map((tool) => (
@@ -2151,9 +2151,6 @@ export default function App() {
             justifyContent: 'center',
             overflowX: 'hidden',
             overflowY: 'auto',
-            backgroundColor: '#b3b3b3',
-            backgroundImage:
-              'repeating-linear-gradient(0deg, #8f8f8f 0, #8f8f8f 1px, #b3b3b3 1px, #b3b3b3 3px)',
           }}
         >
           {!hasImage ? (
@@ -2326,8 +2323,7 @@ export default function App() {
         </section>
 
         <aside
-          className="dg-panel dg-sidepanel bg-white border-l-2 border-black"
-          style={{ height: '100%', overflow: 'auto' }}
+          className="dg-panel dg-sidepanel dg-shell-sidebar bg-white border-l-2 border-black"
         >
           <div className="dg-tabs">
             {['tools', 'layers', 'adjust', 'filters', 'text'].map((tab) => (
@@ -2342,7 +2338,7 @@ export default function App() {
           </div>
 
           {hasImage ? (
-            <div className="flex flex-col gap-3 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+            <div className="flex flex-col gap-3 overflow-y-auto min-h-0">
               {activeTab === 'tools' && (
                 <ColorTools
                   selectedTool={selectedTool}

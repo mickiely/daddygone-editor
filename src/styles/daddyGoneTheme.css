@@ -51,6 +51,8 @@ h1, h2, h3, h4, h5, h6, button, label {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
   padding: 8px 12px;
   background: var(--dg-window);
   color: var(--dg-button-text);
@@ -72,6 +74,13 @@ h1, h2, h3, h4, h5, h6, button, label {
   grid-template-columns: 220px 1fr 320px;
   gap: 12px;
   min-height: 0;
+}
+
+.dg-shell-sidebar {
+  height: calc(100vh - 110px);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .dg-panel {
@@ -161,7 +170,14 @@ h1, h2, h3, h4, h5, h6, button, label {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--dg-panel);
+  background-color: #d4d4d8;
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.6) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.6) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.6) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.6) 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
   border: 1px solid var(--dg-border);
   border-radius: var(--dg-radius-panel);
   box-shadow: 0 0 0 2px #000, inset 0 0 0 1px #000;
@@ -173,6 +189,7 @@ h1, h2, h3, h4, h5, h6, button, label {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
 }
 
 .dg-tabs {
@@ -228,15 +245,21 @@ h1, h2, h3, h4, h5, h6, button, label {
 
 .dg-window--dark {
   background-color: #020617;
-  background-image:
-    repeating-linear-gradient(
-      0deg,
-      rgba(15, 23, 42, 1) 0,
-      rgba(15, 23, 42, 1) 1px,
-      rgba(15, 23, 42, 0.9) 1px,
-      rgba(15, 23, 42, 0.9) 3px
-    );
+  background-image: none;
   color: #e5e7eb;
+}
+
+.dg-window--light .dg-canvas {
+  background-color: #e4e4e7;
+}
+
+.dg-window--dark .dg-canvas {
+  background-color: #111827;
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%);
 }
 
 /* Header bar */
