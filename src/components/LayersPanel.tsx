@@ -41,7 +41,7 @@ export function LayersPanel({
     setLockedLayers(newLocked);
   };
 
-  const sortedLayers = [...layers].sort((a, b) => b.zIndex - a.zIndex);
+  const sortedLayers = [...layers].sort((a, b) => a.zIndex - b.zIndex);
 
   return (
     <div className="flex flex-col h-full">
@@ -57,11 +57,11 @@ export function LayersPanel({
           <Button
             onClick={onDetectLayers}
             disabled={isDetecting}
-            className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+            className="flex-1 bg-gradient-to-r from-cyan-500 to-orange-500 text-black hover:from-cyan-400 hover:to-orange-400"
             size="sm"
           >
             <Sparkles className="h-4 w-4 mr-2" />
-            {isDetecting ? 'Detecting...' : 'Auto-Detect Layers'}
+            {isDetecting ? 'Exploding...' : 'Auto-Layer'}
           </Button>
           <Button
             onClick={onAddImageLayer}
@@ -80,7 +80,7 @@ export function LayersPanel({
             <div className="p-8 text-center text-gray-500">
               <p className="text-sm mb-2">No layers yet</p>
               <p className="text-xs">
-                Use "Auto-Detect Layers" to intelligently separate objects
+                Use "Auto-Layer" to explode the flat image into editable pieces
               </p>
             </div>
           ) : (

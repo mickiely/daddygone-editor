@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Download, RotateCcw, Undo, Redo, Sparkles, FileUp, AlertCircle, FlipHorizontal, FlipVertical, RotateCw, Maximize2, Wand2, Keyboard, Paintbrush, Eraser as EraserIcon, Droplet, Pipette, Sticker, Scan, Type, Crop, Trash2 } from 'lucide-react';
+import { Download, RotateCcw, Undo, Redo, Sparkles, FileUp, AlertCircle, FlipHorizontal, FlipVertical, RotateCw, Maximize2, Wand2, Keyboard, Paintbrush, Eraser as EraserIcon, Droplet, Pipette, Sticker, Scan, Type, Crop, Trash2, Layers3 } from 'lucide-react';
 import { ImageUploader } from './components/ImageUploader';
 import { ColorTools, Tool } from './components/ColorTools';
 import { ColorAdjustments, Adjustments } from './components/ColorAdjustments';
@@ -17,7 +17,6 @@ import { LayersPanel } from './components/LayersPanel';
 import { LayerCanvas } from './components/LayerCanvas';
 import { GeminiKeyDialog } from './components/GeminiKeyDialog';
 import { Layer } from './components/LayerItem';
-import { detectLayersWithAI, extractLayerFromBounds } from './components/ai-layer-detection';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { Toaster } from './components/ui/sonner';
@@ -25,6 +24,15 @@ import { Toaster } from './components/ui/sonner';
 interface HistoryState {
   imageData: ImageData;
 }
+
+interface ExplodeImageResponse {
+  layers?: string[];
+  mocked?: boolean;
+  provider?: string;
+  error?: string;
+}
+
+const AUTO_LAYER_ENDPOINT = '/.netlify/functions/explode-image';
 
 export default function App() {
   const [originalImage, setOriginalImage] = useState<HTMLImageElement | null>(null);
@@ -347,6 +355,28 @@ export default function App() {
     
     setHistory(newHistory);
   }, [history, historyIndex]);
+
+  const clearCanvasForLayerStack = useCallback(() => {
+    const canvas = canvasRef.current;
+    const drawingLayer = drawingLayerRef.current;
+    const ctx = canvas?.getContext('2d');
+    const drawCtx = drawingLayer?.getContext('2d');
+
+    if (!canvas || !ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (drawingLayer && drawCtx) {
+      drawCtx.clearRect(0, 0, drawingLayer.width, drawingLayer.height);
+    }
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    setHistory([{ imageData }]);
+    setHistoryIndex(0);
+    setTextBoxes([]);
+    setSelectedTextBoxId(null);
+    setIsColorBookMode(false);
+    setColorBookBase(null);
+  }, []);
 
   // Undo/Redo
   const handleUndo = () => {
@@ -1774,56 +1804,93 @@ export default function App() {
   };
   
   // Layer Management Functions
-  const handleDetectLayers = async () => {
-    if (!canvasRef.current) return;
-    
-    // Check if API key is set
-    if (!geminiApiKey) {
-      setShowGeminiKeyDialog(true);
+  const handleAutoLayer = async () => {
+    if (!canvasRef.current || !originalImage) {
+      toast.error('Load an image first');
       return;
     }
-    
+
+    const canvas = canvasRef.current;
     setIsDetectingLayers(true);
-    toast.info('Detecting layers with AI...');
-    
+    toast.info('Exploding image into layers...');
+
     try {
-      const detectedObjects = await detectLayersWithAI(canvasRef.current, geminiApiKey);
-      
-      if (detectedObjects.length === 0) {
-        toast.error('No objects detected. Try adjusting the image or use manual tools.');
-        return;
-      }
-      
-      // Create layers from detected objects
-      const newLayers: Layer[] = detectedObjects.map((obj, index) => {
-        const layerCanvas = extractLayerFromBounds(canvasRef.current!, obj.bounds);
-        
-        return {
-          id: layerIdCounter + index + 1,
-          type: 'image' as const,
-          name: obj.name,
-          x: obj.bounds.x,
-          y: obj.bounds.y,
-          width: obj.bounds.width,
-          height: obj.bounds.height,
-          opacity: 1,
-          isVisible: true,
-          zIndex: index + 1,
-          src: layerCanvas.toDataURL(),
-          rotation: 0,
-        };
+      const response = await fetch(AUTO_LAYER_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          image: canvas.toDataURL('image/png'),
+          width: canvas.width,
+          height: canvas.height,
+          num_layers: 4,
+        }),
       });
-      
+
+      const responseText = await response.text();
+      if (!responseText.trim()) {
+        throw new Error(`Auto-layer endpoint returned an empty response from ${AUTO_LAYER_ENDPOINT}`);
+      }
+
+      const parsed = JSON.parse(responseText) as ExplodeImageResponse | string[];
+      const payload: ExplodeImageResponse = Array.isArray(parsed)
+        ? {
+            layers: parsed,
+            mocked: true,
+            provider: 'mock',
+          }
+        : parsed;
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Layer explosion failed');
+      }
+
+      const layerUrls = Array.isArray(payload.layers)
+        ? payload.layers.filter((layer): layer is string => typeof layer === 'string' && layer.length > 0)
+        : [];
+
+      if (layerUrls.length === 0) {
+        throw new Error('No layers returned from the AI service');
+      }
+
+      clearCanvasForLayerStack();
+
+      const nextIdBase = layerIdCounter + 1;
+      const newLayers: Layer[] = layerUrls.map((src, index) => ({
+        id: nextIdBase + index,
+        type: 'image',
+        name: index === 0 ? 'Layer 0 (Background)' : `Layer ${index}`,
+        x: 0,
+        y: 0,
+        width: canvas.width,
+        height: canvas.height,
+        opacity: 1,
+        isVisible: true,
+        zIndex: index + 1,
+        src,
+        rotation: 0,
+      }));
+
       setImageLayers(newLayers);
-      setLayerIdCounter(layerIdCounter + detectedObjects.length);
-      toast.success(`Detected ${detectedObjects.length} layer${detectedObjects.length !== 1 ? 's' : ''}!`);
+      setLayerIdCounter(nextIdBase + layerUrls.length - 1);
+      setSelectedLayerId(nextIdBase);
+      setSelectedTool('brush');
+      setActiveTab('layers');
+      toast.success(
+        payload.mocked
+          ? `Loaded ${layerUrls.length} mock layers. Add REPLICATE_API_TOKEN on Netlify to switch to Qwen.`
+          : `Loaded ${layerUrls.length} AI layers.`
+      );
     } catch (error) {
-      console.error('Layer detection error:', error);
-      toast.error('Failed to detect layers. Check your API key and try again.');
+      console.error('Auto-layer error:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to auto-layer image');
     } finally {
       setIsDetectingLayers(false);
     }
   };
+
+  const handleDetectLayers = handleAutoLayer;
   
   const handleAddImageLayer = () => {
     // Add current canvas as a layer
@@ -1909,7 +1976,7 @@ export default function App() {
     
     // Automatically trigger layer detection
     setTimeout(() => {
-      handleDetectLayers();
+      handleAutoLayer();
     }, 500);
   };
 
@@ -2038,14 +2105,25 @@ export default function App() {
           <div className="dg-toolbox-title">Toolbox</div>
           <div className="flex flex-col gap-2">
             {toolSidebarItems.map((tool) => (
-              <button
-                key={tool.value}
-                onClick={() => setSelectedTool(tool.value)}
-                className={`dg-button ${selectedTool === tool.value ? 'dg-button--active' : ''}`}
-              >
-                <tool.icon className="h-4 w-4" />
-                <span>{tool.label}</span>
-              </button>
+              <React.Fragment key={tool.value}>
+                <button
+                  onClick={() => setSelectedTool(tool.value)}
+                  className={`dg-button ${selectedTool === tool.value ? 'dg-button--active' : ''}`}
+                >
+                  <tool.icon className="h-4 w-4" />
+                  <span>{tool.label}</span>
+                </button>
+                {tool.value === 'sticker' && (
+                  <button
+                    className={`dg-button ${isDetectingLayers ? 'dg-button--active' : ''}`}
+                    onClick={handleAutoLayer}
+                    disabled={!originalImage || isDetectingLayers}
+                  >
+                    <Layers3 className="h-4 w-4" />
+                    <span>{isDetectingLayers ? 'Auto-Layering...' : 'Auto-Layer'}</span>
+                  </button>
+                )}
+              </React.Fragment>
             ))}
           </div>
           <div className="dg-toolbox-title" style={{ marginTop: 12 }}>Swatches</div>
