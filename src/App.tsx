@@ -2003,12 +2003,8 @@ export default function App() {
 
   return (
     <div
-      className={`dg-window ${theme === 'light' ? 'dg-window--light' : 'dg-window--dark'}`}
+      className={`dg-window ${theme === 'light' ? 'dg-window--light' : 'dg-window--dark'} h-screen w-screen flex flex-col overflow-hidden`}
       style={{
-        height: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
         backgroundColor: '#b3b3b3',
         backgroundImage:
           'repeating-linear-gradient(0deg, #8f8f8f 0, #8f8f8f 1px, #b3b3b3 1px, #b3b3b3 3px)',
@@ -2098,10 +2094,10 @@ export default function App() {
       </header>
 
       <div
-        className="dg-main"
-        style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}
+        className="dg-main flex-1 overflow-hidden flex flex-row"
+        style={{ minHeight: 0 }}
       >
-        <aside className="dg-panel dg-toolbox dg-shell-sidebar bg-white border-r-2 border-black">
+        <aside className="dg-panel dg-toolbox dg-shell-sidebar h-full overflow-y-auto pb-8 bg-white border-r-2 border-black">
           <div className="dg-toolbox-title">Toolbox</div>
           <div className="flex flex-col gap-2">
             {toolSidebarItems.map((tool) => (
@@ -2323,7 +2319,7 @@ export default function App() {
         </section>
 
         <aside
-          className="dg-panel dg-sidepanel dg-shell-sidebar bg-white border-l-2 border-black"
+          className="dg-panel dg-sidepanel dg-shell-sidebar h-full overflow-y-auto pb-8 bg-white border-l-2 border-black"
         >
           <div className="dg-tabs">
             {['tools', 'layers', 'adjust', 'filters', 'text'].map((tab) => (
