@@ -2012,7 +2012,7 @@ export default function App() {
     >
       <Toaster position="top-right" />
 
-      <header className="dg-toolbar border-b-2 border-black bg-white px-3 py-2 flex items-center justify-between">
+      <header className="dg-toolbar flex-none border-b-2 border-black bg-white px-3 py-2 flex items-center justify-between">
         <div className="dg-toolbar-title flex items-center gap-2">
           <Sparkles className="h-5 w-5" />
           <div>
@@ -2094,10 +2094,9 @@ export default function App() {
       </header>
 
       <div
-        className="dg-main flex-1 overflow-hidden flex flex-row"
-        style={{ minHeight: 0 }}
+        className="dg-main flex-1 flex flex-row min-h-0 overflow-hidden"
       >
-        <aside className="dg-panel dg-toolbox dg-shell-sidebar h-full overflow-y-auto pb-8 bg-white border-r-2 border-black">
+        <aside className="dg-panel dg-toolbox dg-shell-sidebar flex-none h-full overflow-y-auto pb-12 bg-white border-r-2 border-black">
           <div className="dg-toolbox-title">Toolbox</div>
           <div className="flex flex-col gap-2">
             {toolSidebarItems.map((tool) => (
@@ -2319,7 +2318,7 @@ export default function App() {
         </section>
 
         <aside
-          className="dg-panel dg-sidepanel dg-shell-sidebar h-full overflow-y-auto pb-8 bg-white border-l-2 border-black"
+          className="dg-panel dg-sidepanel dg-shell-sidebar flex-none h-full overflow-y-auto pb-12 bg-white border-l-2 border-black"
         >
           <div className="dg-tabs">
             {['tools', 'layers', 'adjust', 'filters', 'text'].map((tab) => (
